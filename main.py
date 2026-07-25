@@ -52,6 +52,8 @@ app = FastAPI(title="USAA Voting API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://usaavoting.com",
+        "https://www.usaavoting.com",
         "https://usaa-voting-system.vercel.app",
         "http://localhost:5173",
         "http://localhost:3000",
@@ -186,6 +188,15 @@ _otp_attempt_counts: Dict[str, int] = {}
 # ---------------------------------------------------------------------------
 
 DB_URL = os.getenv("DATABASE_URL")
+
+# ---------------------------------------------------------------------------
+# EC contact address — used as Reply-To on every outbound email (OTP,
+# confirmation, registration) so that if a voter hits "Reply" in their mail
+# client, it goes to a real monitored inbox instead of the Brevo sending
+# address (which either doesn't exist as a mailbox, or isn't checked).
+# Change this in ONE place if the EC's monitored address ever changes.
+# ---------------------------------------------------------------------------
+EC_REPLY_TO_EMAIL = "electoralcommissiom231@gmail.com"
 
 
 def get_db():
@@ -369,7 +380,7 @@ def log_audit(
 # ---------------------------------------------------------------------------
 
 def _otp_html(otp_code: str, voter_name: str = "") -> str:
-    LOGO_URL = "https://res.cloudinary.com/dbdgbj4qz/image/upload/v1782139265/logo_ze2vq7.jpg"
+    LOGO_URL = "https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785014193/logo_lebtcw.png"
 
     greeting = f"Hello <strong>{voter_name}</strong>," if voter_name else "Hello,"
 
@@ -439,9 +450,14 @@ def _otp_html(otp_code: str, voter_name: str = "") -> str:
                 <hr style="border:none;border-top:1px solid #f0f0f0;margin:20px 0;">
 
                 <p style="color:#a1a1aa;font-size:11px;
-                          text-align:center;margin:0;line-height:1.6;">
+                          text-align:center;margin:0 0 10px;line-height:1.6;">
                     If you did not request this code, someone may have entered
                     your matric number by mistake. You can safely ignore this email.
+                </p>
+                <p style="color:#a1a1aa;font-size:10px;
+                          text-align:center;margin:0;line-height:1.6;font-style:italic;">
+                    This is an automated message. Replying to this email will
+                    reach the Electoral Commission directly.
                 </p>
             </div>
 
@@ -510,9 +526,12 @@ def _confirmation_html(voter_name: str, ballot_id: str) -> str:
 
                 <hr style="border:none;border-top:1px solid #f0f0f0;margin:0 0 20px;">
 
-                <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0;">
+                <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0 0 8px;">
                     If you did not vote in this election, contact the Electoral Commission
-                    immediately at this email address.
+                    immediately by replying to this email.
+                </p>
+                <p style="color:#a1a1aa;font-size:10px;text-align:center;margin:0;font-style:italic;">
+                    This is an automated message. Replying will reach the Electoral Commission directly.
                 </p>
             </div>
 
@@ -546,6 +565,10 @@ def send_confirmation_email(receiver_email: str, voter_name: str, ballot_id: str
                 "sender": {
                     "name":  "USAA Electoral Commission",
                     "email": sender_email,
+                },
+                "replyTo": {
+                    "name":  "USAA Electoral Commission",
+                    "email": EC_REPLY_TO_EMAIL,
                 },
                 "to":          [{"email": receiver_email, "name": voter_name}],
                 "subject":     "✓ Your USAA ballot has been received",
@@ -584,6 +607,10 @@ def send_otp_email(receiver_email: str, otp_code: str, voter_name: str = ""):
                 "sender": {
                     "name":  "USAA Electoral Commission",
                     "email": sender_email,
+                },
+                "replyTo": {
+                    "name":  "USAA Electoral Commission",
+                    "email": EC_REPLY_TO_EMAIL,
                 },
                 "to":          [{"email": receiver_email, "name": voter_name}],
                 "subject":     "USAA Election — Your Verification Code",
@@ -865,11 +892,20 @@ def get_turnout(conn=Depends(get_db)):
         cur.execute("SELECT COUNT(*) as count FROM Voters WHERE has_voted = TRUE")
         voted = cur.fetchone()["count"]
 
+        # total_ballots_cast is counted directly from the Ballots table — the
+        # same source every position's tally comes from. Using this instead
+        # of `voted` (from Voters.has_voted) avoids the two numbers silently
+        # diverging, which previously caused impossible percentages (e.g.
+        # 250%) and a mismatched "votes cast" stat on the admin dashboard.
+        cur.execute("SELECT COUNT(*) as ballot_count FROM Ballots")
+        total_ballots_cast = cur.fetchone()["ballot_count"]
+
     percentage = round((voted / total) * 100) if total > 0 else 0
     return {
         "status": "success",
         "total_eligible": total,
         "votes_cast": voted,
+        "total_ballots_cast": total_ballots_cast,
         "turnout_percentage": percentage,
     }
 
@@ -1268,7 +1304,7 @@ def chat_assistant(payload: ChatMessage):
     """
     msg = payload.message.lower().strip()
 
-    EC_EMAIL = "electoralcommissiom231@gmail.com"
+    EC_EMAIL = EC_REPLY_TO_EMAIL
 
     def contains_any(words):
         return any(w in msg for w in words)
@@ -1298,13 +1334,13 @@ def chat_assistant(payload: ChatMessage):
         reply = (
             "Make sure you're entering the MOST RECENT code, if you requested more than one, "
             "only the last one is valid. Double-check all 6 digits. If it's been more than 5 "
-            "minutes since you received it, it has expired: tap 'Resend Code' for a fresh one."
+            "minutes since you received it, it has expired tap 'Resend Code' for a fresh one."
         )
 
     # ── 4. Matric number not found / login issues ───────────────────────────
     elif contains_any(["matric", "matriculation", "not found", "doesn't recognize", "not registered"]):
         reply = (
-            "If your matriculation number isn't being recognized, double-check for typos — it's "
+            "If your matriculation number isn't being recognized, double-check for typos it's "
             "not case-sensitive but spacing matters (e.g. no extra spaces before/after). If you're "
             "sure it's correct and it still says 'not found', you may not be on the registered "
             f"voter list yet. Contact the Electoral Commission at {EC_EMAIL} to confirm your registration."
@@ -1334,7 +1370,7 @@ def chat_assistant(payload: ChatMessage):
             "After voting, you receive a unique receipt code (a long string like "
             "'c8a428a8-aba5-...'). Once the Electoral Commission closes the election, go to the "
             "public results page and paste that code into the 'Verify Your Ballot' box. It will "
-            "confirm whether your ballot was counted without revealing your actual choices. "
+            "confirm whether your ballot was counted  without revealing your actual choices. "
             "Keep your receipt code safe (screenshot it) right after you vote, since it's only "
             "shown once."
         )
@@ -1345,14 +1381,14 @@ def chat_assistant(payload: ChatMessage):
             "Results are strictly confidential while voting is open — this protects the election "
             "from being influenced mid-vote. Once the Electoral Commission officially closes the "
             "polls, the full tally, turnout, and winners for all 7 positions automatically appear at: "
-            "https://usaa-voting-system.vercel.app/election-results — no login needed to view it."
+            "https://ussavoting.com/election-results — no login needed to view it."
         )
 
     # ── 9. Unopposed candidates / abstention / blank votes ──────────────────
     elif contains_any(["unopposed", "blank", "skip", "abstain", "abstention", "one candidate"]):
         reply = (
             "For any position, you can leave your selection blank if you don't wish to vote for a "
-            "particular candidate — this counts as an abstention, not an error. Note that even an "
+            "particular candidate this counts as an abstention, not an error. Note that even an "
             "unopposed candidate must still secure enough of the vote to be confirmed, based on the "
             "Electoral Commission's rules for that position."
         )
@@ -1360,7 +1396,7 @@ def chat_assistant(payload: ChatMessage):
     # ── 10. Session expired / logged out ────────────────────────────────────
     elif contains_any(["session expired", "logged out", "signed out", "keeps logging", "session ended"]):
         reply = (
-            "Voter sessions automatically expire after 12 hours for security this protects your "
+            "Voter sessions automatically expire after 12 hours for security — this protects your "
             "vote if you ever leave your phone unattended. Simply log in again with your "
             "matriculation number and you'll get a fresh OTP code."
         )
@@ -1368,7 +1404,7 @@ def chat_assistant(payload: ChatMessage):
     # ── 11. Changing / editing a submitted vote ─────────────────────────────
     elif contains_any(["change my vote", "edit my vote", "made a mistake", "wrong candidate", "undo"]):
         reply = (
-            "Once you confirm and submit your ballot, it cannot be changed or undone this is by "
+            "Once you confirm and submit your ballot, it cannot be changed or undone — this is by "
             "design, to protect the integrity of the election. Before you submit, a confirmation "
             "screen shows all 7 of your selections so you can review them carefully first. Take "
             "your time on that screen before tapping 'Yes, Submit My Ballot'."
@@ -1407,7 +1443,7 @@ def chat_assistant(payload: ChatMessage):
 
     # ── 16. Thanks / closing ─────────────────────────────────────────────────
     elif contains_any(["thank", "thanks", "appreciate", "cheers"]):
-        reply = "You're welcome! Good luck with your vote every ballot matters. 🗳️"
+        reply = "You're welcome! Good luck with your vote — every ballot matters. 🗳️"
 
     # ── 17. Default fallback ──────────────────────────────────────────────────
     else:

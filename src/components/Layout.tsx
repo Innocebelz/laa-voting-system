@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-const LOGO_URL = 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1782139265/logo_ze2vq7.jpg';
+const LOGO_URL = 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785014193/logo_lebtcw.png';
 
 // ── Voting-themed watermark icons ───────────────────────────────────────────
 // Each entry: [iconType, left%, top%, sizePx, rotateDeg]

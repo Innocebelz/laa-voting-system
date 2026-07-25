@@ -84,7 +84,7 @@ const Login: React.FC = () => {
                             ? 'border-red-400 bg-red-50 focus:border-red-500'
                             : 'border-zinc-200 bg-zinc-50 focus:border-yellow-500 focus:bg-white'
                     } placeholder:text-zinc-400 placeholder:normal-case placeholder:font-sans`}
-                    placeholder="e.g. 8UGA12345"
+                    placeholder="Enter your matriculation number"
                     value={matNum}
                     onChange={(e) => {
                       setMatNum(e.target.value);

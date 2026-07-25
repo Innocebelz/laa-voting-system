@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ELECTION_DATA } from '../constants';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, TrendingUp, Users, Download, Lock, Unlock, LogOut, RefreshCw } from 'lucide-react';
+import { Loader2, TrendingUp, Users, Download, Lock, Unlock, LogOut, RefreshCw, Trophy, XCircle } from 'lucide-react';
 
 const BACKEND_URL = 'https://laa-voting-system.onrender.com';
 
 interface TurnoutData {
     total_eligible:     number;
     votes_cast:         number;
+    total_ballots_cast: number;   // source of truth for per-position % and 50% threshold
     turnout_percentage: number;
 }
 
@@ -145,7 +146,7 @@ const AdminDashboard: React.FC = () => {
         })).sort((a, b) => b.votes - a.votes);
 
         const total = candidates.reduce((s, c) => s + c.votes, 0);
-        return { label: category.position, candidates, total };
+        return { label: category.position, candidates, total, unopposed: category.unopposed };
     };
 
     const toggleElectionStatus = async () => {
@@ -184,7 +185,7 @@ const AdminDashboard: React.FC = () => {
         });
         const link  = document.createElement('a');
         link.href   = encodeURI('data:text/csv;charset=utf-8,' + csv);
-        link.setAttribute('download', `ussa_results_${new Date().toISOString().split('T')[0]}.csv`);
+        link.setAttribute('download', `usaa_results_${new Date().toISOString().split('T')[0]}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -278,6 +279,11 @@ const AdminDashboard: React.FC = () => {
 
     // dbKey is the exact Postgres column name — no derivation needed
     const positionKeys = ELECTION_DATA.map(c => c.dbKey);
+
+    // Same denominator used on the public results page — sourced directly
+    // from the Ballots table, not Voters.has_voted, so it can never diverge
+    // from what each position's own tally sums to.
+    const totalBallotsCast = turnout?.total_ballots_cast ?? turnout?.votes_cast ?? 0;
 
     return (
         <div
@@ -497,7 +503,7 @@ const AdminDashboard: React.FC = () => {
                     {positionKeys.map(posKey => {
                         const result = buildPositionResults(posKey);
                         if (!result) return null;
-                        const { label, candidates, total } = result;
+                        const { label, candidates, total, unopposed } = result;
 
                         return (
                             <div key={posKey} className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
@@ -510,7 +516,7 @@ const AdminDashboard: React.FC = () => {
                                             {label}
                                         </h3>
                                         <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
-                                        {total} vote{total !== 1 ? 's' : ''}
+                                        {unopposed ? 'Vote of Confidence Required' : `${total} vote${total !== 1 ? 's' : ''}`}
                                     </span>
                                     </div>
 
@@ -542,21 +548,40 @@ const AdminDashboard: React.FC = () => {
                                         /* Results rows */
                                         <div className="space-y-4">
                                             {candidates.map((candidate, index) => {
-                                                const pct       = total > 0 ? Math.round((candidate.votes / total) * 100) : 0;
-                                                const isLeading = index === 0 && candidate.votes > 0;
+
+                                                // ── THE 50% CONSTITUTIONAL RULE MATH ──────────────────
+                                                // Identical logic to the public results page — kept in
+                                                // sync so the EC's internal live view always matches
+                                                // what voters will eventually see published.
+                                                let isWinner = false;
+                                                let failedVoteOfConfidence = false;
+
+                                                if (unopposed) {
+                                                    isWinner = candidate.votes >= (totalBallotsCast / 2) && candidate.votes > 0;
+                                                    failedVoteOfConfidence = !isWinner;
+                                                } else {
+                                                    const nextCandidate = candidates[1];
+                                                    isWinner = index === 0 && candidate.votes > 0 && (!nextCandidate || candidate.votes > nextCandidate.votes);
+                                                }
+
+                                                const baseTotal = unopposed ? totalBallotsCast : total;
+                                                const pct = baseTotal > 0 ? Math.round((candidate.votes / baseTotal) * 100) : 0;
 
                                                 return (
                                                     <div key={candidate.id}>
                                                         <div className="flex items-center gap-3 mb-1.5">
 
-                                                            {/* Rank badge */}
-                                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${
-                                                                isLeading
-                                                                    ? 'bg-yellow-400 text-zinc-900'
-                                                                    : 'bg-zinc-100 text-zinc-500'
+                                                            {/* Status badge — trophy / rank / failed */}
+                                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                                                                isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-50' : 'bg-zinc-100')
                                                             }`}>
-                                                            {index + 1}
-                                                        </span>
+                                                                {isWinner
+                                                                    ? <Trophy className="w-3.5 h-3.5 text-zinc-900" />
+                                                                    : (failedVoteOfConfidence
+                                                                        ? <XCircle className="w-3.5 h-3.5 text-red-500" />
+                                                                        : <span className="text-[11px] font-black text-zinc-500">{index + 1}</span>)
+                                                                }
+                                                            </span>
 
                                                             {/* Photo */}
                                                             <img
@@ -567,21 +592,33 @@ const AdminDashboard: React.FC = () => {
                                                                         `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name)}&background=18181b&color=eab308&size=64`;
                                                                 }}
                                                                 className={`w-9 h-9 rounded-full object-cover border-2 shrink-0 ${
-                                                                    isLeading ? 'border-yellow-400' : 'border-zinc-200'
+                                                                    isWinner ? 'border-yellow-400' : (failedVoteOfConfidence ? 'border-red-300' : 'border-zinc-200')
                                                                 }`}
                                                             />
 
-                                                            {/* Name */}
-                                                            <span className={`font-black text-sm flex-1 truncate uppercase ${
-                                                                isLeading ? 'text-zinc-900' : 'text-zinc-500'
-                                                            }`}>
-                                                            {candidate.name}
-                                                        </span>
+                                                            {/* Name + winner/failed tag */}
+                                                            <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                                                                <span className={`font-black text-sm truncate uppercase ${
+                                                                    isWinner ? 'text-zinc-900' : (failedVoteOfConfidence ? 'text-red-700' : 'text-zinc-500')
+                                                                }`}>
+                                                                    {candidate.name}
+                                                                </span>
+                                                                {isWinner && (
+                                                                    <span className="text-[9px] font-black bg-yellow-400 text-zinc-900 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                                                        Winner
+                                                                    </span>
+                                                                )}
+                                                                {failedVoteOfConfidence && (
+                                                                    <span className="text-[9px] font-black bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                                                        Failed 50%
+                                                                    </span>
+                                                                )}
+                                                            </div>
 
                                                             {/* Votes + pct */}
                                                             <div className="text-right shrink-0">
                                                             <span className={`text-xl font-black tabular-nums ${
-                                                                isLeading ? 'text-yellow-600' : 'text-zinc-400'
+                                                                isWinner ? 'text-yellow-600' : (failedVoteOfConfidence ? 'text-red-500' : 'text-zinc-400')
                                                             }`}>
                                                                 {candidate.votes}
                                                             </span>
@@ -595,7 +632,7 @@ const AdminDashboard: React.FC = () => {
                                                         <div className="ml-9 h-2 bg-zinc-100 rounded-full overflow-hidden">
                                                             <div
                                                                 className={`h-full rounded-full transition-all duration-700 ease-out ${
-                                                                    isLeading ? 'bg-yellow-400' : 'bg-zinc-300'
+                                                                    isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-400' : 'bg-zinc-300')
                                                                 }`}
                                                                 style={{ width: `${pct}%` }}
                                                             />
@@ -923,7 +960,7 @@ const AdminDashboard: React.FC = () => {
                                         },
                                         {
                                             title: ' Duplicate name (MEDIUM)',
-                                            body:  'Two registrations share the same full name. This may be two different students with the same name — cross-check their matric numbers and emails against university records. If it\'s the same person registered twice, delete the duplicate row.',
+                                            body:  'Two registrations share the same full name. This may be two different students with the same name, cross-check their matric numbers and emails against university records. If it\'s the same person registered twice, delete the duplicate row.',
                                         },
                                         {
                                             title: ' After resolving',

@@ -20,6 +20,12 @@ DB_URL             = os.getenv("DATABASE_URL")
 BREVO_API_KEY      = os.getenv("BREVO_API_KEY")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
 
+# EC contact address — used as Reply-To so a voter hitting "Reply" reaches
+# a real monitored inbox instead of the Brevo sending address. Keep this in
+# sync with EC_REPLY_TO_EMAIL in main.py — same address, one source of truth
+# conceptually even though it's duplicated across these two standalone files.
+EC_REPLY_TO_EMAIL = "enositbale@gmail.com"
+
 # Safety cap — stop after sending this many in one run, so a huge unsent
 # backlog can never blow through your daily Brevo limit by accident.
 MAX_EMAILS_PER_RUN = 280
@@ -79,10 +85,13 @@ def _registration_html(voter_name: str, matric_number: str, email: str) -> str:
 
                 <hr style="border:none;border-top:1px solid #f0f0f0;margin:0 0 20px;">
 
-                <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0;line-height:1.6;">
+                <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0 0 8px;line-height:1.6;">
                     If any of these details are incorrect, or if you did not register
-                    yourself, please contact the Electoral Commission immediately at
-                    electoralcommissiom231@gmail.com
+                    yourself, please contact the Electoral Commission immediately by
+                    replying to this email.
+                </p>
+                <p style="color:#a1a1aa;font-size:10px;text-align:center;margin:0;font-style:italic;">
+                    This is an automated message. Replying will reach the Electoral Commission directly.
                 </p>
             </div>
 
@@ -113,6 +122,10 @@ def send_registration_email(receiver_email: str, voter_name: str, matric_number:
                 "sender": {
                     "name":  "USAA Electoral Commission",
                     "email": BREVO_SENDER_EMAIL,
+                },
+                "replyTo": {
+                    "name":  "USAA Electoral Commission",
+                    "email": EC_REPLY_TO_EMAIL,
                 },
                 "to":          [{"email": receiver_email, "name": voter_name}],
                 "subject":     "✓ You are registered to vote — USAA General Election",
