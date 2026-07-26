@@ -30,7 +30,7 @@ export const ELECTION_DATA: ElectionCategory[] = [
         id: 'pres_2',
         name: 'Akampamya Agaston',
         manifesto: 'Building a stronger, more inclusive, and progressive students’ union through servant leadership, transparent governance, and effective advocacy.',
-        image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1781651683/okwera_yahdc6.jpg',
+        image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785076261/agaston_k729hw.png',
       },
       {
         id: 'pres_3',
@@ -51,7 +51,7 @@ export const ELECTION_DATA: ElectionCategory[] = [
         id: 'mvp_1',
         name: 'Zziwa Charles',
         manifesto: 'Enhancing student welfare and fostering a vibrant campus life through dedicated service and community engagement.',
-        image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1781651680/edmond_n8awmr.jpg',
+        image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785076262/ziwa_fawrkn.png',
       },
       {
         id: 'mvp_2',
