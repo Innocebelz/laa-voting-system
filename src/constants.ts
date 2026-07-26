@@ -56,8 +56,16 @@ export const ELECTION_DATA: ElectionCategory[] = [
       {
         id: 'mvp_2',
         name: 'Okata Ben',
-        manifesto: 'Advocating for student welfare, academic excellence, and a vibrant campus community through inclusive leadership and effective representation.',
         image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785063301/okata_szw3au.png',
+        manifesto: 'A United Ugandan Community in Algeria.', // fallback, keep this filled too
+        vision: 'A United Ugandan Community in Algeria.',
+        keyPriorities: [
+          'Representation: Ensure every student\'s voice is heard and valued.',
+          'Student Welfare: Strengthen support systems for academic and personal well-being.',
+          'Unity: Foster stronger connections among Ugandan students across all cities.',
+          'Accountability: Promote transparent, responsive, and service-driven leadership.',
+        ],
+        motto: 'Built by All, For All.',
       },
     ],
   },
