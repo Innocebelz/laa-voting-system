@@ -24,7 +24,7 @@ BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
 # a real monitored inbox instead of the Brevo sending address. Keep this in
 # sync with EC_REPLY_TO_EMAIL in main.py — same address, one source of truth
 # conceptually even though it's duplicated across these two standalone files.
-EC_REPLY_TO_EMAIL = "enositbale@gmail.com"
+EC_REPLY_TO_EMAIL = "electoralcommissiom231@gmail.com"
 
 # Safety cap — stop after sending this many in one run, so a huge unsent
 # backlog can never blow through your daily Brevo limit by accident.
