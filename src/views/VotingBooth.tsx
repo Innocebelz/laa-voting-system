@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Loader2, AlertCircle, CheckCircle2, ChevronDown, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle2, ChevronDown, ShieldCheck, ZoomIn, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ELECTION_DATA } from '../constants';
 
@@ -12,6 +12,7 @@ const VotingBooth: React.FC = () => {
     const [submitError, setSubmitError]   = useState('');
     const [visible, setVisible]           = useState(false);
     const [justSelected, setJustSelected] = useState<string | null>(null);
+    const [lightboxPhoto, setLightboxPhoto] = useState<{ image: string; name: string; position: string } | null>(null);
     const { user, vote } = useAuth();
     const navigate = useNavigate();
     const confirmRef = useRef<HTMLDivElement>(null);
@@ -175,9 +176,17 @@ const VotingBooth: React.FC = () => {
                                         <div key={candidate.id} className="flex flex-col">
 
                                             {/* ── Candidate row ── */}
-                                            <button
+                                            <div
                                                 onClick={() => handleSelect(category.position, candidate.id)}
-                                                className={`w-full flex items-center gap-4 px-4 py-4 text-left transition-all duration-200 active:bg-zinc-50 ${
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        handleSelect(category.position, candidate.id);
+                                                    }
+                                                }}
+                                                role="button"
+                                                tabIndex={0}
+                                                className={`w-full flex items-center gap-4 px-4 py-4 text-left transition-all duration-200 active:bg-zinc-50 cursor-pointer select-none ${
                                                     isSelected ? 'bg-yellow-50' : 'bg-white hover:bg-zinc-50'
                                                 } ${isPulsing ? 'scale-[0.99]' : 'scale-100'}`}
                                             >
@@ -197,6 +206,18 @@ const VotingBooth: React.FC = () => {
                                                             <CheckCircle2 className="w-4 h-4 text-zinc-900" />
                                                         </div>
                                                     )}
+                                                    {/* Tap-to-enlarge — shows the real, uncropped campaign photo */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setLightboxPhoto({ image: candidate.image, name: candidate.name, position: category.position });
+                                                        }}
+                                                        aria-label={`View full photo of ${candidate.name}`}
+                                                        className="absolute -top-1 -right-1 w-6 h-6 bg-zinc-900/80 hover:bg-zinc-900 rounded-full flex items-center justify-center border-2 border-white shadow-sm transition-colors"
+                                                    >
+                                                        <ZoomIn className="w-3 h-3 text-yellow-400" />
+                                                    </button>
                                                 </div>
 
                                                 {/* Name + position */}
@@ -217,7 +238,7 @@ const VotingBooth: React.FC = () => {
                                                 }`}>
                                                     {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-zinc-900" />}
                                                 </div>
-                                            </button>
+                                            </div>
 
                                             {/* Read more toggle */}
                                             <button
@@ -230,13 +251,49 @@ const VotingBooth: React.FC = () => {
                                                 {isExpanded ? 'Hide manifesto' : 'Read manifesto'}
                                             </button>
 
-                                            {/* Manifesto — expands/collapses */}
-                                            <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-64' : 'max-h-0'}`}>
-                                                <p className={`px-4 pb-4 text-sm italic leading-relaxed border-t pt-3 ${
-                                                    isSelected ? 'border-yellow-100 text-zinc-600' : 'border-zinc-100 text-zinc-500'
+                                            {/* Manifesto — expands/collapses. Renders structured campaign
+                                                material (Vision / Key Priorities / Motto) when a candidate
+                                                has submitted it; falls back to the plain manifesto text
+                                                for candidates who only sent a short paragraph. */}
+                                            <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[32rem]' : 'max-h-0'}`}>
+                                                <div className={`px-4 pb-4 border-t pt-3 space-y-3 ${
+                                                    isSelected ? 'border-yellow-100' : 'border-zinc-100'
                                                 }`}>
-                                                    "{candidate.manifesto}"
-                                                </p>
+                                                    {candidate.vision && (
+                                                        <div>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-1">Vision</p>
+                                                            <p className="text-sm text-zinc-600 leading-relaxed">{candidate.vision}</p>
+                                                        </div>
+                                                    )}
+
+                                                    {candidate.keyPriorities && candidate.keyPriorities.length > 0 && (
+                                                        <div>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-1.5">Key Priorities</p>
+                                                            <ul className="space-y-1.5">
+                                                                {candidate.keyPriorities.map((priority, i) => (
+                                                                    <li key={i} className="flex gap-2 text-sm text-zinc-600 leading-relaxed">
+                                                                        <span className={`shrink-0 font-black ${isSelected ? 'text-yellow-600' : 'text-zinc-400'}`}>•</span>
+                                                                        <span>{priority}</span>
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+
+                                                    {!candidate.vision && !candidate.keyPriorities && candidate.manifesto && (
+                                                        <p className="text-sm italic leading-relaxed text-zinc-500">
+                                                            "{candidate.manifesto}"
+                                                        </p>
+                                                    )}
+
+                                                    {candidate.motto && (
+                                                        <p className={`text-xs font-black uppercase tracking-widest text-center pt-2 ${
+                                                            isSelected ? 'text-yellow-600' : 'text-zinc-400'
+                                                        }`}>
+                                                            "{candidate.motto}"
+                                                        </p>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     );
@@ -364,6 +421,44 @@ const VotingBooth: React.FC = () => {
                                     Go Back &amp; Review
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Photo lightbox — shows the real, uncropped campaign photo ── */}
+            {lightboxPhoto && (
+                <div
+                    className="fixed inset-0 bg-zinc-900/90 flex items-center justify-center p-4 z-50 backdrop-blur-sm"
+                    onClick={() => setLightboxPhoto(null)}
+                >
+                    <button
+                        onClick={() => setLightboxPhoto(null)}
+                        aria-label="Close photo"
+                        className="absolute top-5 right-5 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
+                    >
+                        <X className="w-5 h-5 text-white" />
+                    </button>
+                    <div
+                        className="max-w-sm w-full"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <img
+                            src={lightboxPhoto.image}
+                            alt={lightboxPhoto.name}
+                            onError={(e) => {
+                                (e.target as HTMLImageElement).src =
+                                    `https://ui-avatars.com/api/?name=${encodeURIComponent(lightboxPhoto.name)}&background=18181b&color=eab308&size=512`;
+                            }}
+                            className="w-full rounded-2xl object-cover shadow-2xl border-4 border-white/10"
+                        />
+                        <div className="text-center mt-4">
+                            <p className="text-white font-black text-lg uppercase tracking-tight">
+                                {lightboxPhoto.name}
+                            </p>
+                            <p className="text-yellow-400 text-xs font-bold uppercase tracking-widest mt-0.5">
+                                {lightboxPhoto.position}
+                            </p>
                         </div>
                     </div>
                 </div>

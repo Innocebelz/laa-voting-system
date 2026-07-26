@@ -9,8 +9,11 @@ export interface User {
 export interface Candidate {
   id: string;
   name: string;
-  manifesto: string;
+  manifesto: string;        // fallback plain-text manifesto — always required
   image: string;
+  vision?: string;          // optional — a one-line vision statement
+  keyPriorities?: string[]; // optional — rendered as a bulleted list
+  motto?: string;           // optional — short tagline, styled distinctly
 }
 
 export interface ElectionCategory {
