@@ -503,7 +503,7 @@ def _confirmation_html(voter_name: str, ballot_id: str) -> str:
                 <p style="color:#3f3f46;font-size:14px;margin:0 0 20px;line-height:1.6;">
                     Your ballot has been successfully submitted for the
                     <strong>U.S.A.A General Elections</strong>.
-                    Your vote is anonymous — it cannot be linked back to you by
+                    Your vote is anonymous it cannot be linked back to you by
                     anyone, including the Electoral Commission.
                 </p>
 
