@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { Loader2, AlertCircle, CheckCircle2, ChevronDown, ShieldCheck, ZoomIn, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -326,7 +327,14 @@ const VotingBooth: React.FC = () => {
             </div>
 
             {/* ── Confirm modal ──────────────────────────────────────────── */}
-            {showConfirm && (
+            {/* Rendered via portal directly into document.body — the parent
+                wrapper above uses translate-y for its fade-in animation,
+                and ANY transform on an ancestor (even translateY(0)) creates
+                a new containing block that breaks `position: fixed` for
+                descendants. Without the portal, this modal would render
+                fixed relative to that transformed wrapper instead of the
+                actual viewport — which is why it required scrolling to see. */}
+            {showConfirm && createPortal(
                 <div className="fixed inset-0 bg-zinc-900/60 flex items-end sm:items-center justify-center p-4 z-50 backdrop-blur-sm">
                     <div
                         ref={confirmRef}
@@ -423,11 +431,14 @@ const VotingBooth: React.FC = () => {
                             </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* ── Photo lightbox — shows the real, uncropped campaign photo ── */}
-            {lightboxPhoto && (
+            {/* Also portaled to document.body — same containing-block issue
+                as the confirm modal above applies here too. */}
+            {lightboxPhoto && createPortal(
                 <div
                     className="fixed inset-0 bg-zinc-900/90 flex items-center justify-center p-4 z-50 backdrop-blur-sm"
                     onClick={() => setLightboxPhoto(null)}
@@ -461,7 +472,8 @@ const VotingBooth: React.FC = () => {
                             </p>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
