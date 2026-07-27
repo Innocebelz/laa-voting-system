@@ -56,12 +56,26 @@ export const ELECTION_DATA: ElectionCategory[] = [
           'Prepare students for life after Algeria through career readiness, degree recognition, and academic advocacy.',
         ],
       },
-      {
-        id: 'pres_3',
-        name: 'Natukunda Isaiah',
-        manifesto: 'Building a stronger, more inclusive, and progressive students’ union through servant leadership, transparent governance, and effective advocacy.',
-        image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1781651678/david_teokfo.jpg',
-      },
+        {
+            id: 'pres_3',
+            name: 'Natukunda Isaiah',
+            image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785153557/isaiah_om1yni.png',
+            manifesto:
+                'Committed to building a student-centred association through transparent leadership, effective communication, student welfare, academic excellence, and unity.',
+            motto: 'Leadership Rooted in Service.',
+            keyPriorities: [
+                'Build a truly student-centred association where every voice matters.',
+                'Promote transparent and accountable leadership.',
+                'Ensure effective communication and information sharing.',
+                'Strengthen student welfare and support systems.',
+                'Guarantee equal representation and participatory leadership.',
+                'Promote academic excellence and personal development.',
+                'Build strong institutions for lasting impact.',
+                'Foster unity and inclusiveness among all students.',
+                'Strengthen professional representation and strategic partnerships.',
+                'Lead with integrity, humility, and a spirit of service.',
+            ],
+        },
     ],
   },
 
