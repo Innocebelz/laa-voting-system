@@ -18,6 +18,35 @@ const VotingBooth: React.FC = () => {
     const navigate = useNavigate();
     const confirmRef = useRef<HTMLDivElement>(null);
 
+    // ── Scroll-reveal + stacking animation ───────────────────────────────
+    // Purely visual — does not touch selections, submission, or any vote
+    // state. Set STICKY_STACK_ENABLED to false to disable the "stacking
+    // cards" pinning effect if it ever feels disorienting during real
+    // voting, while keeping the fade/slide reveal on scroll.
+    const STICKY_STACK_ENABLED = true;
+    const [revealedCards, setRevealedCards] = useState<Record<string, boolean>>({});
+    const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                entries.forEach((entry) => {
+                    const key = (entry.target as HTMLElement).dataset.revealKey;
+                    if (entry.isIntersecting && key) {
+                        // Reveal once — never re-hide on scroll back up, so
+                        // completed cards don't flicker or feel unstable.
+                        setRevealedCards(prev => (prev[key] ? prev : { ...prev, [key]: true }));
+                    }
+                });
+            },
+            { threshold: 0.12, rootMargin: '0px 0px -60px 0px' }
+        );
+
+        Object.values(cardRefs.current).forEach(el => { if (el) observer.observe(el); });
+
+        return () => observer.disconnect();
+    }, []);
+
     useEffect(() => {
         const t = setTimeout(() => setVisible(true), 30);
         return () => clearTimeout(t);
@@ -123,15 +152,25 @@ const VotingBooth: React.FC = () => {
 
             {/* ── Ballot positions ───────────────────────────────────────── */}
             <div className="flex-1 space-y-6 mb-4">
-                {ELECTION_DATA.map((category) => {
+                {ELECTION_DATA.map((category, index) => {
                     const positionSelected  = !!selections[category.position];
                     const selectedCandidate = category.candidates.find(c => c.id === selections[category.position]);
                     const isPresident       = category.position.toLowerCase() === 'president';
+                    const isRevealed        = !!revealedCards[category.dbKey];
 
                     return (
                         <div
                             key={category.position}
-                            className={`bg-white rounded-2xl overflow-hidden transition-all duration-300 ${
+                            ref={(el) => { cardRefs.current[category.dbKey] = el; }}
+                            data-reveal-key={category.dbKey}
+                            style={STICKY_STACK_ENABLED ? {
+                                position: 'sticky',
+                                top: `${5 + index * 0.9}rem`,
+                                zIndex: 10 + index,
+                            } : undefined}
+                            className={`bg-white rounded-2xl overflow-hidden transition-all duration-700 ease-out will-change-transform ${
+                                isRevealed ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+                            } ${
                                 isPresident
                                     ? `border-4 ${positionSelected ? 'border-yellow-400 shadow-lg' : 'border-zinc-300 shadow-md'}`
                                     : `border-2 ${positionSelected ? 'border-yellow-400 shadow-md' : 'border-zinc-200'}`

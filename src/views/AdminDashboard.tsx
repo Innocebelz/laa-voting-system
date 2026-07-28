@@ -674,8 +674,8 @@ const AdminDashboard: React.FC = () => {
                                 <h3 className="text-sm font-black text-zinc-900 uppercase tracking-widest">New EC Member Account</h3>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     {[
-                                        { id: 'u-username',  label: 'Username',  key: 'username',  type: 'text',     placeholder: 'john.doe' },
-                                        { id: 'u-fullname',  label: 'Full Name', key: 'full_name', type: 'text',     placeholder: 'John Doe' },
+                                        { id: 'u-username',  label: 'Username',  key: 'username',  type: 'text',     placeholder: 'innoce.belz' },
+                                        { id: 'u-fullname',  label: 'Full Name', key: 'full_name', type: 'text',     placeholder: 'Innoce belz' },
                                         { id: 'u-password',  label: 'Password',  key: 'password',  type: 'password', placeholder: '••••••••' },
                                     ].map(f => (
                                         <div key={f.id}>

@@ -62,7 +62,7 @@ export const ELECTION_DATA: ElectionCategory[] = [
             image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785153557/isaiah_om1yni.png',
             manifesto:
                 'Committed to building a student-centred association through transparent leadership, effective communication, student welfare, academic excellence, and unity.',
-            motto: 'Leadership Rooted in Service.',
+            motto: 'Progress Guided by Your Voice',
             keyPriorities: [
                 'Build a truly student-centred association where every voice matters.',
                 'Promote transparent and accountable leadership.',
