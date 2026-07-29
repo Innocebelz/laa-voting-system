@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
-import { Loader2, AlertCircle, CheckCircle2, ChevronDown, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle2, ChevronDown, ShieldCheck, ZoomIn, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ELECTION_DATA } from '../constants';
 
@@ -12,9 +13,39 @@ const VotingBooth: React.FC = () => {
     const [submitError, setSubmitError]   = useState('');
     const [visible, setVisible]           = useState(false);
     const [justSelected, setJustSelected] = useState<string | null>(null);
+    const [lightboxPhoto, setLightboxPhoto] = useState<{ image: string; name: string; position: string } | null>(null);
     const { user, vote } = useAuth();
     const navigate = useNavigate();
     const confirmRef = useRef<HTMLDivElement>(null);
+
+    // ── Scroll-reveal + stacking animation ───────────────────────────────
+    // Purely visual — does not touch selections, submission, or any vote
+    // state. Set STICKY_STACK_ENABLED to false to disable the "stacking
+    // cards" pinning effect if it ever feels disorienting during real
+    // voting, while keeping the fade/slide reveal on scroll.
+    const STICKY_STACK_ENABLED = true;
+    const [revealedCards, setRevealedCards] = useState<Record<string, boolean>>({});
+    const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                entries.forEach((entry) => {
+                    const key = (entry.target as HTMLElement).dataset.revealKey;
+                    if (entry.isIntersecting && key) {
+                        // Reveal once — never re-hide on scroll back up, so
+                        // completed cards don't flicker or feel unstable.
+                        setRevealedCards(prev => (prev[key] ? prev : { ...prev, [key]: true }));
+                    }
+                });
+            },
+            { threshold: 0.12, rootMargin: '0px 0px -60px 0px' }
+        );
+
+        Object.values(cardRefs.current).forEach(el => { if (el) observer.observe(el); });
+
+        return () => observer.disconnect();
+    }, []);
 
     useEffect(() => {
         const t = setTimeout(() => setVisible(true), 30);
@@ -121,15 +152,25 @@ const VotingBooth: React.FC = () => {
 
             {/* ── Ballot positions ───────────────────────────────────────── */}
             <div className="flex-1 space-y-6 mb-4">
-                {ELECTION_DATA.map((category) => {
+                {ELECTION_DATA.map((category, index) => {
                     const positionSelected  = !!selections[category.position];
                     const selectedCandidate = category.candidates.find(c => c.id === selections[category.position]);
                     const isPresident       = category.position.toLowerCase() === 'president';
+                    const isRevealed        = !!revealedCards[category.dbKey];
 
                     return (
                         <div
                             key={category.position}
-                            className={`bg-white rounded-2xl overflow-hidden transition-all duration-300 ${
+                            ref={(el) => { cardRefs.current[category.dbKey] = el; }}
+                            data-reveal-key={category.dbKey}
+                            style={STICKY_STACK_ENABLED ? {
+                                position: 'sticky',
+                                top: `${5 + index * 0.9}rem`,
+                                zIndex: 10 + index,
+                            } : undefined}
+                            className={`bg-white rounded-2xl overflow-hidden transition-all duration-700 ease-out will-change-transform ${
+                                isRevealed ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+                            } ${
                                 isPresident
                                     ? `border-4 ${positionSelected ? 'border-yellow-400 shadow-lg' : 'border-zinc-300 shadow-md'}`
                                     : `border-2 ${positionSelected ? 'border-yellow-400 shadow-md' : 'border-zinc-200'}`
@@ -175,9 +216,17 @@ const VotingBooth: React.FC = () => {
                                         <div key={candidate.id} className="flex flex-col">
 
                                             {/* ── Candidate row ── */}
-                                            <button
+                                            <div
                                                 onClick={() => handleSelect(category.position, candidate.id)}
-                                                className={`w-full flex items-center gap-4 px-4 py-4 text-left transition-all duration-200 active:bg-zinc-50 ${
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        handleSelect(category.position, candidate.id);
+                                                    }
+                                                }}
+                                                role="button"
+                                                tabIndex={0}
+                                                className={`w-full flex items-center gap-4 px-4 py-4 text-left transition-all duration-200 active:bg-zinc-50 cursor-pointer select-none ${
                                                     isSelected ? 'bg-yellow-50' : 'bg-white hover:bg-zinc-50'
                                                 } ${isPulsing ? 'scale-[0.99]' : 'scale-100'}`}
                                             >
@@ -197,6 +246,18 @@ const VotingBooth: React.FC = () => {
                                                             <CheckCircle2 className="w-4 h-4 text-zinc-900" />
                                                         </div>
                                                     )}
+                                                    {/* Tap-to-enlarge — shows the real, uncropped campaign photo */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setLightboxPhoto({ image: candidate.image, name: candidate.name, position: category.position });
+                                                        }}
+                                                        aria-label={`View full photo of ${candidate.name}`}
+                                                        className="absolute -top-1 -right-1 w-6 h-6 bg-zinc-900/80 hover:bg-zinc-900 rounded-full flex items-center justify-center border-2 border-white shadow-sm transition-colors"
+                                                    >
+                                                        <ZoomIn className="w-3 h-3 text-yellow-400" />
+                                                    </button>
                                                 </div>
 
                                                 {/* Name + position */}
@@ -217,7 +278,7 @@ const VotingBooth: React.FC = () => {
                                                 }`}>
                                                     {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-zinc-900" />}
                                                 </div>
-                                            </button>
+                                            </div>
 
                                             {/* Read more toggle */}
                                             <button
@@ -230,13 +291,49 @@ const VotingBooth: React.FC = () => {
                                                 {isExpanded ? 'Hide manifesto' : 'Read manifesto'}
                                             </button>
 
-                                            {/* Manifesto — expands/collapses */}
-                                            <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-64' : 'max-h-0'}`}>
-                                                <p className={`px-4 pb-4 text-sm italic leading-relaxed border-t pt-3 ${
-                                                    isSelected ? 'border-yellow-100 text-zinc-600' : 'border-zinc-100 text-zinc-500'
+                                            {/* Manifesto — expands/collapses. Renders structured campaign
+                                                material (Vision / Key Priorities / Motto) when a candidate
+                                                has submitted it; falls back to the plain manifesto text
+                                                for candidates who only sent a short paragraph. */}
+                                            <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[32rem]' : 'max-h-0'}`}>
+                                                <div className={`px-4 pb-4 border-t pt-3 space-y-3 ${
+                                                    isSelected ? 'border-yellow-100' : 'border-zinc-100'
                                                 }`}>
-                                                    "{candidate.manifesto}"
-                                                </p>
+                                                    {candidate.vision && (
+                                                        <div>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-1">Vision</p>
+                                                            <p className="text-sm text-zinc-600 leading-relaxed">{candidate.vision}</p>
+                                                        </div>
+                                                    )}
+
+                                                    {candidate.keyPriorities && candidate.keyPriorities.length > 0 && (
+                                                        <div>
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-1.5">Key Priorities</p>
+                                                            <ul className="space-y-1.5">
+                                                                {candidate.keyPriorities.map((priority, i) => (
+                                                                    <li key={i} className="flex gap-2 text-sm text-zinc-600 leading-relaxed">
+                                                                        <span className={`shrink-0 font-black ${isSelected ? 'text-yellow-600' : 'text-zinc-400'}`}>•</span>
+                                                                        <span>{priority}</span>
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+
+                                                    {!candidate.vision && !candidate.keyPriorities && candidate.manifesto && (
+                                                        <p className="text-sm italic leading-relaxed text-zinc-500">
+                                                            "{candidate.manifesto}"
+                                                        </p>
+                                                    )}
+
+                                                    {candidate.motto && (
+                                                        <p className={`text-xs font-black uppercase tracking-widest text-center pt-2 ${
+                                                            isSelected ? 'text-yellow-600' : 'text-zinc-400'
+                                                        }`}>
+                                                            "{candidate.motto}"
+                                                        </p>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     );
@@ -269,7 +366,14 @@ const VotingBooth: React.FC = () => {
             </div>
 
             {/* ── Confirm modal ──────────────────────────────────────────── */}
-            {showConfirm && (
+            {/* Rendered via portal directly into document.body — the parent
+                wrapper above uses translate-y for its fade-in animation,
+                and ANY transform on an ancestor (even translateY(0)) creates
+                a new containing block that breaks `position: fixed` for
+                descendants. Without the portal, this modal would render
+                fixed relative to that transformed wrapper instead of the
+                actual viewport — which is why it required scrolling to see. */}
+            {showConfirm && createPortal(
                 <div className="fixed inset-0 bg-zinc-900/60 flex items-end sm:items-center justify-center p-4 z-50 backdrop-blur-sm">
                     <div
                         ref={confirmRef}
@@ -366,7 +470,49 @@ const VotingBooth: React.FC = () => {
                             </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
+            )}
+
+            {/* ── Photo lightbox — shows the real, uncropped campaign photo ── */}
+            {/* Also portaled to document.body — same containing-block issue
+                as the confirm modal above applies here too. */}
+            {lightboxPhoto && createPortal(
+                <div
+                    className="fixed inset-0 bg-zinc-900/90 flex items-center justify-center p-4 z-50 backdrop-blur-sm"
+                    onClick={() => setLightboxPhoto(null)}
+                >
+                    <button
+                        onClick={() => setLightboxPhoto(null)}
+                        aria-label="Close photo"
+                        className="absolute top-5 right-5 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
+                    >
+                        <X className="w-5 h-5 text-white" />
+                    </button>
+                    <div
+                        className="max-w-sm w-full"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <img
+                            src={lightboxPhoto.image}
+                            alt={lightboxPhoto.name}
+                            onError={(e) => {
+                                (e.target as HTMLImageElement).src =
+                                    `https://ui-avatars.com/api/?name=${encodeURIComponent(lightboxPhoto.name)}&background=18181b&color=eab308&size=512`;
+                            }}
+                            className="w-full rounded-2xl object-cover shadow-2xl border-4 border-white/10"
+                        />
+                        <div className="text-center mt-4">
+                            <p className="text-white font-black text-lg uppercase tracking-tight">
+                                {lightboxPhoto.name}
+                            </p>
+                            <p className="text-yellow-400 text-xs font-bold uppercase tracking-widest mt-0.5">
+                                {lightboxPhoto.position}
+                            </p>
+                        </div>
+                    </div>
+                </div>,
+                document.body
             )}
         </div>
     );
