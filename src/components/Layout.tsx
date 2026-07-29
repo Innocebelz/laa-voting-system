@@ -2,9 +2,7 @@ import React, { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-// ─── LOGO URL ───────────────────────────────────────────────────────────────
 const LOGO_URL = 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785014193/logo_lebtcw.png';
-// ────────────────────────────────────────────────────────────────────────────
 
 // ── Voting-themed watermark icons ───────────────────────────────────────────
 // Each entry: [iconType, left%, top%, sizePx, rotateDeg]
@@ -91,21 +89,21 @@ const Layout: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-stone-50 font-sans flex flex-col text-zinc-900">
+        <div className="min-h-screen bg-stone-50 font-sans flex flex-col overflow-hidden text-zinc-900 relative">
 
             {/* ── HEADER ───────────────────────────────────────────────── */}
             <header className="bg-zinc-900 text-white px-6 py-4 flex flex-col sm:flex-row justify-between items-center border-b-4 border-yellow-500 space-y-4 sm:space-y-0 relative z-10 w-full shrink-0">
                 <div className="flex items-center space-x-4">
                     <div
                         onClick={handleSecretClick}
-                        title="U.S.S.A"
+                        title="U.S.A.A"
                         className={`w-14 h-14 rounded-full flex items-center justify-center shrink-0 cursor-pointer select-none overflow-hidden border-2 border-yellow-500 transition-transform duration-150 ${logoScale ? 'scale-110' : 'scale-100'}`}
                     >
                         {LOGO_URL ? (
-                            <img src={LOGO_URL} alt="USSA Logo" className="w-full h-full object-cover rounded-full" />
+                            <img src={LOGO_URL} alt="USAA Logo" className="w-full h-full object-cover rounded-full" />
                         ) : (
                             <div className="w-full h-full bg-yellow-500 flex items-center justify-center">
-                                <span className="text-zinc-900 font-black text-sm tracking-tight">USSA</span>
+                                <span className="text-zinc-900 font-black text-sm tracking-tight">USAA</span>
                             </div>
                         )}
                     </div>
@@ -138,13 +136,7 @@ const Layout: React.FC = () => {
             </header>
 
             {/* ── CONTENT AREA (watermark lives here) ──────────────────── */}
-            {/* No overflow-hidden here — it silently breaks position:sticky
-                for any descendant (like the voting booth's stacking cards),
-                since it establishes a scroll container that never actually
-                scrolls itself. VotingWatermark below already clips itself
-                via its own absolute + overflow-hidden wrapper, so nothing
-                needs to be clipped at this level. */}
-            <div className="flex-1 relative">
+            <div className="flex-1 relative overflow-hidden">
 
                 {/* Voting watermark — behind everything */}
                 <VotingWatermark />
@@ -156,7 +148,7 @@ const Layout: React.FC = () => {
             </div>
 
             {/* ── FOOTER ───────────────────────────────────────────────── */}
-            <footer className="bg-zinc-900 shrink-0 select-none border-t-2 border-yellow-500">
+            <footer className="bg-zinc-900 shrink-0 select-none border-t-2 border-yellow-500 relative z-10">
                 <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
 
                     <div className="text-[11px] font-semibold text-zinc-500 tracking-wide text-center sm:text-left">
