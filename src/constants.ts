@@ -26,7 +26,7 @@ export const ELECTION_DATA: ElectionCategory[] = [
         image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785063293/omara_h4jk6l.png',
         manifesto:
             'Committed to serving students through strong leadership, prioritizing welfare, promoting unity, ensuring accountability, and representing every student effectively.',
-        motto: 'Service, Unity & Accountability.',
+        motto: '#Chief Servant',
         keyPriorities: [
           'Promote a culture of service to all students.',
           'Prioritize student welfare and well-being.',
@@ -42,7 +42,7 @@ export const ELECTION_DATA: ElectionCategory[] = [
         image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785076261/agaston_k729hw.png',
         manifesto:
             'Committed to putting students first through strong welfare support, academic and career development, transparent leadership, innovation, and unity across all Ugandan students in Algeria.',
-        motto: 'Igniting Leadership, Empowering Students.',
+        motto: 'From Uganda, For All, Together in Algeria',
         keyPriorities: [
           'Prioritize student welfare through advocacy, emergency support, and stipend-related initiatives.',
           'Promote career growth, mentorship, internships, and networking opportunities.',
@@ -176,7 +176,7 @@ export const ELECTION_DATA: ElectionCategory[] = [
         name: 'Kwikiriza Moris',
         image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785063292/ohms_ynwb7v.png',
         manifesto: 'Ensuring equal opportunities for all, creating talk shows and debates, promoting access to study materials, bridging the student-academic board gap, inclusive co-curriculars, mentorship programs, and diverse sports participation.',
-        motto: 'Empowering Every Mind, Elevating Every Talent',
+        motto: 'Intergrity and Visionary leadeship service for all',
         keyPriorities: [
           'Ensuring that everyone gets equal opportunities, without selection.',
           'Creating talk shows, debates, and various public speaking opportunities.',
@@ -230,7 +230,7 @@ export const ELECTION_DATA: ElectionCategory[] = [
     candidates: [
       {
         id: 'gsec_1',
-        name: 'KARUNGI JANE',
+        name: 'Karungi Jane',
         image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785065020/jane_xavulw.png',
         manifesto:
             'Committed to fostering effective communication, strengthening student representation, promoting transparency and accountability, and building a united and inclusive USAA community.',

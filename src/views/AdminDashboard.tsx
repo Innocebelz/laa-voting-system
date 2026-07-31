@@ -894,7 +894,7 @@ const AdminDashboard: React.FC = () => {
                                     </p>
                                     <p className={`text-xs font-medium mt-0.5 ${integrityData.safe_to_open ? 'text-green-600' : 'text-red-600'}`}>
                                         {integrityData.safe_to_open
-                                            ? 'Duplicate name flags (medium severity) may be coincidences — review at your discretion.'
+                                            ? 'Duplicate name flags (medium severity) may be coincidences, review at your discretion.'
                                             : 'Duplicate emails mean one person may be able to vote twice. Investigate each case in Supabase before proceeding.'
                                         }
                                     </p>
