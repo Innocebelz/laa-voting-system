@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ELECTION_DATA } from '../constants';
 import {
-    Trophy, Users, TrendingUp, Search,
-    CheckCircle2, XCircle, Loader2, Clock, Share2, Check, Award
+    Users, TrendingUp, Search,
+    CheckCircle2, XCircle, Loader2, Clock, Share2, Check, ShieldCheck, MinusCircle
 } from 'lucide-react';
 
 const BACKEND_URL = 'https://laa-voting-system.onrender.com';
@@ -39,7 +39,7 @@ interface Turnout {
 interface WinnerInfo {
     candidate: { id: string; name: string; image: string; votes: number } | null;
     pct:    number;
-    reason: 'winner' | 'failed_threshold' | 'no_votes';
+    reason: 'winner' | 'failed_threshold' | 'tied' | 'no_votes';
 }
 
 const PublicResults: React.FC = () => {
@@ -60,12 +60,22 @@ const PublicResults: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        let cancelled = false;
+        let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
         const fetchResults = async () => {
             try {
-                const res  = await fetch(`${BACKEND_URL}/api/public/results`);
+                const res = await fetch(`${BACKEND_URL}/api/public/results`);
+                if (!res.ok) throw new Error(`Results request failed: ${res.status}`);
                 const data = await res.json();
+                if (cancelled) return;
+
                 if (data.status === 'in_progress') {
                     setStatus('in_progress');
+                    // Poll while voting is still open so the page flips to
+                    // results automatically once the election closes,
+                    // instead of requiring a manual refresh.
+                    pollTimer = setTimeout(fetchResults, 30000);
                 } else if (data.status === 'closed') {
                     setStatus('closed');
                     setTally(data.results);
@@ -76,6 +86,11 @@ const PublicResults: React.FC = () => {
             }
         };
         fetchResults();
+
+        return () => {
+            cancelled = true;
+            if (pollTimer) clearTimeout(pollTimer);
+        };
     }, []);
 
     const handleVerify = async (e: React.FormEvent) => {
@@ -84,7 +99,8 @@ const PublicResults: React.FC = () => {
         try {
             setVerifyResult(null);
             setVerifying(true);
-            const res  = await fetch(`${BACKEND_URL}/api/verify-ballot/${encodeURIComponent(receiptInput.trim())}`);
+            const res = await fetch(`${BACKEND_URL}/api/verify-ballot/${encodeURIComponent(receiptInput.trim())}`);
+            if (!res.ok) throw new Error(`Verify request failed: ${res.status}`);
             const data = await res.json();
             setVerifyResult(data.counted ? 'counted' : 'not_found');
         } catch {
@@ -131,7 +147,7 @@ const PublicResults: React.FC = () => {
         const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
         if (!result || !category) return null;
 
-        const { candidates, total } = result;
+        const { candidates } = result;
         const totalBallotsCast = turnout?.total_ballots_cast ?? turnout?.votes_cast ?? 0;
 
         if (category.unopposed) {
@@ -144,14 +160,24 @@ const PublicResults: React.FC = () => {
                 reason: cleared50 ? 'winner' : (only && only.votes > 0 ? 'failed_threshold' : 'no_votes'),
             };
         } else {
+            // The 50% Vote of Confidence rule now applies here too: a
+            // competitive candidate must have both (a) more votes than
+            // every opponent, and (b) at least half of ALL ballots cast
+            // in the election (not just this position's own total).
             const top  = candidates[0];
             const next = candidates[1];
-            const pct  = total > 0 && top ? Math.round((top.votes / total) * 100) : 0;
-            const isWinner = !!top && top.votes > 0 && (!next || top.votes > next.votes);
+            const pct  = totalBallotsCast > 0 && top ? Math.round((top.votes / totalBallotsCast) * 100) : 0;
+
+            const isTied        = !!top && !!next && top.votes === next.votes && top.votes > 0;
+            const hasPlurality  = !!top && top.votes > 0 && !isTied && (!next || top.votes > next.votes);
+            const cleared50     = hasPlurality && top.votes >= (totalBallotsCast / 2);
+
             return {
-                candidate: isWinner ? top : null,
+                candidate: cleared50 ? top : null,
                 pct,
-                reason: isWinner ? 'winner' : 'no_votes',
+                reason: cleared50
+                    ? 'winner'
+                    : (isTied ? 'tied' : (hasPlurality ? 'failed_threshold' : 'no_votes')),
             };
         }
     };
@@ -218,7 +244,7 @@ const PublicResults: React.FC = () => {
                                 className={`${large ? 'w-28 h-28' : 'w-20 h-20'} rounded-full object-cover border-4 border-yellow-400`}
                             />
                             <div className={`absolute -bottom-1 -right-1 ${large ? 'w-10 h-10' : 'w-8 h-8'} bg-yellow-400 rounded-full flex items-center justify-center border-2 border-white shadow`}>
-                                <Trophy className={large ? 'w-5 h-5 text-zinc-900' : 'w-4 h-4 text-zinc-900'} />
+                                <ShieldCheck className={large ? 'w-5 h-5 text-zinc-900' : 'w-4 h-4 text-zinc-900'} />
                             </div>
                         </div>
                         <p className="text-[10px] font-black text-yellow-600 uppercase tracking-widest mb-1">
@@ -227,7 +253,10 @@ const PublicResults: React.FC = () => {
                         <p className={`font-black text-zinc-900 uppercase ${large ? 'text-xl' : 'text-sm'}`}>
                             {c.name}
                         </p>
-                        <p className="text-xs text-zinc-400 font-bold mt-1">
+                        <p className="text-[9px] font-black text-yellow-700 bg-yellow-100 border border-yellow-300 px-2 py-0.5 rounded-full uppercase tracking-widest mt-1.5 inline-block">
+                            Elected
+                        </p>
+                        <p className="text-xs text-zinc-400 font-bold mt-1.5">
                             {c.votes} vote{c.votes !== 1 ? 's' : ''} · {info.pct}%
                         </p>
                     </div>
@@ -256,18 +285,42 @@ const PublicResults: React.FC = () => {
             );
         }
 
-        // reason === 'no_votes' — neutral, not an error state
+        if (info.reason === 'tied') {
+            return (
+                <div className={`bg-orange-50 rounded-2xl border-2 border-orange-200 ${large ? 'p-7' : 'p-5'}`}>
+                    <div className="flex flex-col items-center text-center">
+                        <div className={`${large ? 'w-20 h-20' : 'w-16 h-16'} rounded-full bg-orange-100 border-2 border-orange-300 flex items-center justify-center mb-3`}>
+                            <Users className={large ? 'w-9 h-9 text-orange-500' : 'w-7 h-7 text-orange-500'} />
+                        </div>
+                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-1">
+                            {categoryLabel}
+                        </p>
+                        <p className={`font-black text-orange-700 uppercase ${large ? 'text-base' : 'text-sm'}`}>
+                            Tied — Runoff Required
+                        </p>
+                        <p className="text-xs text-orange-500 font-bold mt-1">
+                            Leading candidates tied at {info.pct}%
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        // reason === 'no_votes' — the election is already closed at this
+        // point (this component only renders once status === 'closed'),
+        // so this means no valid votes were recorded for this position,
+        // not that results are still pending.
         return (
             <div className={`bg-zinc-50 rounded-2xl border-2 border-zinc-200 ${large ? 'p-7' : 'p-5'}`}>
                 <div className="flex flex-col items-center text-center">
                     <div className={`${large ? 'w-20 h-20' : 'w-16 h-16'} rounded-full bg-zinc-100 border-2 border-zinc-300 flex items-center justify-center mb-3`}>
-                        <Award className={large ? 'w-9 h-9 text-zinc-400' : 'w-7 h-7 text-zinc-400'} />
+                        <MinusCircle className={large ? 'w-9 h-9 text-zinc-400' : 'w-7 h-7 text-zinc-400'} />
                     </div>
                     <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">
                         {categoryLabel}
                     </p>
                     <p className={`font-black text-zinc-500 uppercase ${large ? 'text-base' : 'text-sm'}`}>
-                        Awaiting Results
+                        No Votes Recorded
                     </p>
                 </div>
             </div>
@@ -351,11 +404,11 @@ const PublicResults: React.FC = () => {
             <div className="space-y-4">
                 <div className="text-center pt-2">
                     <h2 className="text-lg font-black text-zinc-900 uppercase tracking-tight flex items-center justify-center gap-2">
-                        <Trophy className="w-5 h-5 text-yellow-500" />
-                        Your New Leadership
+                        <ShieldCheck className="w-5 h-5 text-yellow-500" />
+                        Elected Representatives
                     </h2>
                     <p className="text-xs text-zinc-400 font-medium mt-1">
-                        Official winners across all 7 positions
+                        Official results across all 7 positions
                     </p>
                 </div>
 
@@ -422,35 +475,44 @@ const PublicResults: React.FC = () => {
                                         const totalBallotsCast = turnout?.total_ballots_cast ?? turnout?.votes_cast ?? 0;
                                         let isWinner = false;
                                         let failedVoteOfConfidence = false;
+                                        let isTiedCandidate = false;
 
                                         if (category?.unopposed) {
                                             // RULE 1: Unopposed candidates MUST secure >= 50% of total ballots
                                             isWinner = candidate.votes >= (totalBallotsCast / 2) && candidate.votes > 0;
-                                            failedVoteOfConfidence = !isWinner;
+                                            failedVoteOfConfidence = !isWinner && candidate.votes > 0;
                                         } else {
-                                            // RULE 2: Competitive candidates just need the most votes
+                                            // RULE 2: Competitive candidates need BOTH the most votes AND
+                                            // >= 50% of total ballots cast — the same Vote of Confidence
+                                            // rule as unopposed races, just with a plurality check first.
                                             const nextCandidate = candidates[1];
-                                            isWinner = index === 0 && candidate.votes > 0 && (!nextCandidate || candidate.votes > nextCandidate.votes);
+                                            const isTiedRace = !!nextCandidate && candidate.votes === nextCandidate.votes && candidates[0]?.votes === nextCandidate.votes && candidates[0].votes > 0;
+                                            const hasPlurality = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
+                                            isWinner = hasPlurality && candidate.votes >= (totalBallotsCast / 2);
+                                            failedVoteOfConfidence = hasPlurality && !isWinner;
+                                            isTiedCandidate = isTiedRace && index <= 1;
                                         }
 
-                                        // For unopposed, calculate percentage out of TOTAL BALLOTS CAST,
-                                        // not just this position's own total — this is what makes the
-                                        // "50% of everyone who voted" rule meaningful.
-                                        const baseTotal = category?.unopposed ? totalBallotsCast : total;
-                                        const pct = baseTotal > 0 ? Math.round((candidate.votes / baseTotal) * 100) : 0;
+                                        // Percentage is now always out of TOTAL BALLOTS CAST across every
+                                        // position — the same denominator the 50% rule is checked against —
+                                        // so the number shown next to ELECTED/FAILED 50% always matches the
+                                        // rule that produced that badge.
+                                        const pct = totalBallotsCast > 0 ? Math.round((candidate.votes / totalBallotsCast) * 100) : 0;
 
                                         return (
                                             <div key={candidate.id}>
                                                 <div className="flex items-center gap-3 mb-2">
 
                                                     <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                                                        isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-50' : 'bg-zinc-100')
+                                                        isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-50' : (isTiedCandidate ? 'bg-orange-50' : 'bg-zinc-100'))
                                                     }`}>
                                                         {isWinner
-                                                            ? <Trophy className="w-3.5 h-3.5 text-zinc-900" />
+                                                            ? <ShieldCheck className="w-3.5 h-3.5 text-zinc-900" />
                                                             : (failedVoteOfConfidence
                                                                 ? <XCircle className="w-4 h-4 text-red-500" />
-                                                                : <span className="text-xs font-black text-zinc-400">{index + 1}</span>)
+                                                                : (isTiedCandidate
+                                                                    ? <Users className="w-3.5 h-3.5 text-orange-500" />
+                                                                    : <span className="text-xs font-black text-zinc-400">{index + 1}</span>))
                                                         }
                                                     </div>
 
@@ -462,20 +524,20 @@ const PublicResults: React.FC = () => {
                                                                 `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name)}&background=18181b&color=eab308&size=128`;
                                                         }}
                                                         className={`w-10 h-10 rounded-full object-cover border-2 shrink-0 ${
-                                                            isWinner ? 'border-yellow-400' : (failedVoteOfConfidence ? 'border-red-300' : 'border-zinc-200')
+                                                            isWinner ? 'border-yellow-400' : (failedVoteOfConfidence ? 'border-red-300' : (isTiedCandidate ? 'border-orange-300' : 'border-zinc-200'))
                                                         }`}
                                                     />
 
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
                                                             <span className={`font-black text-sm uppercase ${
-                                                                isWinner ? 'text-zinc-900' : (failedVoteOfConfidence ? 'text-red-700' : 'text-zinc-500')
+                                                                isWinner ? 'text-zinc-900' : (failedVoteOfConfidence ? 'text-red-700' : (isTiedCandidate ? 'text-orange-700' : 'text-zinc-500'))
                                                             }`}>
                                                                 {candidate.name}
                                                             </span>
                                                             {isWinner && (
                                                                 <span className="text-[9px] font-black bg-yellow-400 text-zinc-900 px-2 py-0.5 rounded-full uppercase tracking-widest">
-                                                                    WINNER
+                                                                    ELECTED
                                                                 </span>
                                                             )}
                                                             {failedVoteOfConfidence && (
@@ -483,12 +545,17 @@ const PublicResults: React.FC = () => {
                                                                     FAILED 50%
                                                                 </span>
                                                             )}
+                                                            {isTiedCandidate && (
+                                                                <span className="text-[9px] font-black bg-orange-100 text-orange-700 border border-orange-200 px-2 py-0.5 rounded-full uppercase tracking-widest">
+                                                                    TIED
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </div>
 
                                                     <div className="text-right shrink-0">
                                                         <span className={`text-2xl font-black tabular-nums ${
-                                                            isWinner ? 'text-yellow-600' : (failedVoteOfConfidence ? 'text-red-500' : 'text-zinc-400')
+                                                            isWinner ? 'text-yellow-600' : (failedVoteOfConfidence ? 'text-red-500' : (isTiedCandidate ? 'text-orange-500' : 'text-zinc-400'))
                                                         }`}>
                                                             {candidate.votes}
                                                         </span>
@@ -499,7 +566,7 @@ const PublicResults: React.FC = () => {
                                                 <div className="ml-10 h-2.5 bg-zinc-100 rounded-full overflow-hidden">
                                                     <div
                                                         className={`h-full rounded-full transition-all duration-700 ease-out ${
-                                                            isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-400' : 'bg-zinc-300')
+                                                            isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-400' : (isTiedCandidate ? 'bg-orange-400' : 'bg-zinc-300'))
                                                         }`}
                                                         style={{ width: `${pct}%` }}
                                                     />
