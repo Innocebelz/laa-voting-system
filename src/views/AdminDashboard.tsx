@@ -561,20 +561,21 @@ const AdminDashboard: React.FC = () => {
                                                     isWinner = candidate.votes >= (totalBallotsCast / 2) && candidate.votes > 0;
                                                     failedVoteOfConfidence = !isWinner && candidate.votes > 0;
                                                 } else {
-                                                    // Same rule as unopposed positions: a candidate needs
-                                                    // BOTH the most votes AND >= 50% of total ballots cast.
+                                                    // Competitive candidates just need a plurality — most
+                                                    // votes among the field wins. The 50% Vote of Confidence
+                                                    // rule is exclusive to unopposed races.
                                                     const nextCandidate = candidates[1];
                                                     const isTiedRace = !!nextCandidate && candidates[0]?.votes === nextCandidate.votes && candidates[0].votes > 0;
-                                                    const hasPlurality = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
-                                                    isWinner = hasPlurality && candidate.votes >= (totalBallotsCast / 2);
-                                                    failedVoteOfConfidence = hasPlurality && !isWinner;
+                                                    isWinner = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
                                                     isTiedCandidate = isTiedRace && index <= 1;
                                                 }
 
-                                                // Percentage always out of total ballots cast, for every
-                                                // position, so the number shown next to a badge always
-                                                // matches the rule that produced that badge.
-                                                const pct = totalBallotsCast > 0 ? Math.round((candidate.votes / totalBallotsCast) * 100) : 0;
+                                                // Unopposed: percentage out of total ballots cast, which is
+                                                // what the 50% rule is checked against. Competitive: percentage
+                                                // out of this position's own vote total, since no ballots-cast
+                                                // threshold applies there.
+                                                const baseTotal = unopposed ? totalBallotsCast : total;
+                                                const pct = baseTotal > 0 ? Math.round((candidate.votes / baseTotal) * 100) : 0;
 
                                                 return (
                                                     <div key={candidate.id}>

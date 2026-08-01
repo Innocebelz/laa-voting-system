@@ -147,7 +147,7 @@ const PublicResults: React.FC = () => {
         const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
         if (!result || !category) return null;
 
-        const { candidates } = result;
+        const { candidates, total } = result;
         const totalBallotsCast = turnout?.total_ballots_cast ?? turnout?.votes_cast ?? 0;
 
         if (category.unopposed) {
@@ -160,24 +160,20 @@ const PublicResults: React.FC = () => {
                 reason: cleared50 ? 'winner' : (only && only.votes > 0 ? 'failed_threshold' : 'no_votes'),
             };
         } else {
-            // The 50% Vote of Confidence rule now applies here too: a
-            // competitive candidate must have both (a) more votes than
-            // every opponent, and (b) at least half of ALL ballots cast
-            // in the election (not just this position's own total).
+            // The 50% Vote of Confidence rule is exclusive to unopposed
+            // races. Competitive positions just need a plurality — most
+            // votes among the field wins, no threshold to clear.
             const top  = candidates[0];
             const next = candidates[1];
-            const pct  = totalBallotsCast > 0 && top ? Math.round((top.votes / totalBallotsCast) * 100) : 0;
+            const pct  = total > 0 && top ? Math.round((top.votes / total) * 100) : 0;
 
-            const isTied        = !!top && !!next && top.votes === next.votes && top.votes > 0;
-            const hasPlurality  = !!top && top.votes > 0 && !isTied && (!next || top.votes > next.votes);
-            const cleared50     = hasPlurality && top.votes >= (totalBallotsCast / 2);
+            const isTied   = !!top && !!next && top.votes === next.votes && top.votes > 0;
+            const isWinner = !!top && top.votes > 0 && !isTied && (!next || top.votes > next.votes);
 
             return {
-                candidate: cleared50 ? top : null,
+                candidate: isWinner ? top : null,
                 pct,
-                reason: cleared50
-                    ? 'winner'
-                    : (isTied ? 'tied' : (hasPlurality ? 'failed_threshold' : 'no_votes')),
+                reason: isWinner ? 'winner' : (isTied ? 'tied' : 'no_votes'),
             };
         }
     };
@@ -464,14 +460,6 @@ const PublicResults: React.FC = () => {
                                 <div className="space-y-4">
                                     {candidates.map((candidate, index) => {
 
-                                        // ── THE 50% CONSTITUTIONAL RULE MATH ────────────────────────────────
-                                        // Uses total_ballots_cast (counted directly from the Ballots table
-                                        // on the backend) rather than turnout.votes_cast (counted from
-                                        // Voters.has_voted). Both should normally agree, but only Ballots is
-                                        // the actual source every position's tally above is computed from —
-                                        // using it here guarantees the percentage can never exceed 100%,
-                                        // even if the two tables ever fall out of sync (e.g. test data,
-                                        // manual DB edits).
                                         const totalBallotsCast = turnout?.total_ballots_cast ?? turnout?.votes_cast ?? 0;
                                         let isWinner = false;
                                         let failedVoteOfConfidence = false;
@@ -482,22 +470,21 @@ const PublicResults: React.FC = () => {
                                             isWinner = candidate.votes >= (totalBallotsCast / 2) && candidate.votes > 0;
                                             failedVoteOfConfidence = !isWinner && candidate.votes > 0;
                                         } else {
-                                            // RULE 2: Competitive candidates need BOTH the most votes AND
-                                            // >= 50% of total ballots cast — the same Vote of Confidence
-                                            // rule as unopposed races, just with a plurality check first.
+                                            // RULE 2: Competitive candidates just need a plurality — most
+                                            // votes among the field wins. The 50% Vote of Confidence rule
+                                            // is exclusive to unopposed races, not applied here.
                                             const nextCandidate = candidates[1];
-                                            const isTiedRace = !!nextCandidate && candidate.votes === nextCandidate.votes && candidates[0]?.votes === nextCandidate.votes && candidates[0].votes > 0;
-                                            const hasPlurality = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
-                                            isWinner = hasPlurality && candidate.votes >= (totalBallotsCast / 2);
-                                            failedVoteOfConfidence = hasPlurality && !isWinner;
+                                            const isTiedRace = !!nextCandidate && candidates[0]?.votes === nextCandidate.votes && candidates[0].votes > 0;
+                                            isWinner = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
                                             isTiedCandidate = isTiedRace && index <= 1;
                                         }
 
-                                        // Percentage is now always out of TOTAL BALLOTS CAST across every
-                                        // position — the same denominator the 50% rule is checked against —
-                                        // so the number shown next to ELECTED/FAILED 50% always matches the
-                                        // rule that produced that badge.
-                                        const pct = totalBallotsCast > 0 ? Math.round((candidate.votes / totalBallotsCast) * 100) : 0;
+                                        // For unopposed, percentage is out of TOTAL BALLOTS CAST — what
+                                        // makes the 50% rule meaningful. For competitive races, percentage
+                                        // is out of this position's own vote total, since there's no
+                                        // ballots-cast threshold being checked there.
+                                        const baseTotal = category?.unopposed ? totalBallotsCast : total;
+                                        const pct = baseTotal > 0 ? Math.round((candidate.votes / baseTotal) * 100) : 0;
 
                                         return (
                                             <div key={candidate.id}>
