@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ELECTION_DATA } from '../constants';
 import {
     Trophy, Users, TrendingUp, Search,
-    CheckCircle2, XCircle, Loader2, Clock
+    CheckCircle2, XCircle, Loader2, Clock, Share2, Check, Award
 } from 'lucide-react';
 
 const BACKEND_URL = 'https://laa-voting-system.onrender.com';
@@ -30,21 +30,29 @@ function useCountUp(target: number, duration = 1200, delay = 0) {
 interface CandidateResult { candidate_id: string; votes: number; }
 interface Tally { [position: string]: CandidateResult[]; }
 interface Turnout {
-    total_eligible: number;
-    votes_cast: number;
+    total_eligible:     number;
+    votes_cast:         number;
     total_ballots_cast: number;   // source of truth for per-position % and 50% threshold
     turnout_percentage: number;
 }
 
+interface WinnerInfo {
+    candidate: { id: string; name: string; image: string; votes: number } | null;
+    pct:    number;
+    reason: 'winner' | 'failed_threshold' | 'no_votes';
+}
+
 const PublicResults: React.FC = () => {
-    const [status, setStatus] = useState<'loading' | 'in_progress' | 'closed'>('loading');
-    const [tally, setTally] = useState<Tally | null>(null);
-    const [turnout, setTurnout] = useState<Turnout | null>(null);
-    const [visible, setVisible] = useState(false);
+    const [status, setStatus]           = useState<'loading' | 'in_progress' | 'closed'>('loading');
+    const [tally, setTally]             = useState<Tally | null>(null);
+    const [turnout, setTurnout]         = useState<Turnout | null>(null);
+    const [visible, setVisible]         = useState(false);
 
     const [receiptInput, setReceiptInput] = useState('');
-    const [verifying, setVerifying] = useState(false);
+    const [verifying, setVerifying]       = useState(false);
     const [verifyResult, setVerifyResult] = useState<'counted' | 'not_found' | null>(null);
+
+    const [shareCopied, setShareCopied] = useState(false);
 
     useEffect(() => {
         const t = setTimeout(() => setVisible(true), 30);
@@ -54,7 +62,7 @@ const PublicResults: React.FC = () => {
     useEffect(() => {
         const fetchResults = async () => {
             try {
-                const res = await fetch(`${BACKEND_URL}/api/public/results`);
+                const res  = await fetch(`${BACKEND_URL}/api/public/results`);
                 const data = await res.json();
                 if (data.status === 'in_progress') {
                     setStatus('in_progress');
@@ -76,7 +84,7 @@ const PublicResults: React.FC = () => {
         try {
             setVerifyResult(null);
             setVerifying(true);
-            const res = await fetch(`${BACKEND_URL}/api/verify-ballot/${encodeURIComponent(receiptInput.trim())}`);
+            const res  = await fetch(`${BACKEND_URL}/api/verify-ballot/${encodeURIComponent(receiptInput.trim())}`);
             const data = await res.json();
             setVerifyResult(data.counted ? 'counted' : 'not_found');
         } catch {
@@ -86,26 +94,76 @@ const PublicResults: React.FC = () => {
         }
     };
 
+    const handleShare = async () => {
+        const shareData = {
+            title: 'USAA General Election Results',
+            text:  'See the official results of the USAA General Election.',
+            url:   window.location.href,
+        };
+        if (navigator.share) {
+            try { await navigator.share(shareData); } catch { /* user cancelled — ignore */ }
+        } else {
+            try {
+                await navigator.clipboard.writeText(window.location.href);
+                setShareCopied(true);
+                setTimeout(() => setShareCopied(false), 2000);
+            } catch { /* clipboard unavailable — silently ignore */ }
+        }
+    };
+
     const buildResults = (dbKey: string) => {
         const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
         if (!category || !tally) return null;
-        const raw = tally[dbKey] ?? [];
-        const voteMap = Object.fromEntries(raw.map(r => [r.candidate_id, r.votes]));
-        const total = raw.reduce((s, r) => s + r.votes, 0);
+        const raw      = tally[dbKey] ?? [];
+        const voteMap  = Object.fromEntries(raw.map(r => [r.candidate_id, r.votes]));
+        const total    = raw.reduce((s, r) => s + r.votes, 0);
         const candidates = category.candidates
             .map(c => ({ ...c, votes: voteMap[c.id] ?? 0 }))
             .sort((a, b) => b.votes - a.votes);
         return { label: category.position, candidates, total };
     };
 
-    const positionKeys = ELECTION_DATA.map(c => c.dbKey);
-    const animPct = useCountUp(turnout?.turnout_percentage ?? 0, 1200, 400);
-    const animCast = useCountUp(turnout?.votes_cast ?? 0, 1000, 500);
-    const animEligible = useCountUp(turnout?.total_eligible ?? 0, 1000, 600);
+    // ── Single source of truth for "who won this position" ──────────────
+    // Used by BOTH the winner spotlight grid and the detailed breakdown
+    // below, so the two sections can never disagree with each other.
+    const getWinnerInfo = (dbKey: string): WinnerInfo | null => {
+        const result   = buildResults(dbKey);
+        const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
+        if (!result || !category) return null;
 
-    const R = 15.9155;
+        const { candidates, total } = result;
+        const totalBallotsCast = turnout?.total_ballots_cast ?? turnout?.votes_cast ?? 0;
+
+        if (category.unopposed) {
+            const only = candidates[0];
+            const pct  = totalBallotsCast > 0 ? Math.round(((only?.votes ?? 0) / totalBallotsCast) * 100) : 0;
+            const cleared50 = !!only && only.votes >= (totalBallotsCast / 2) && only.votes > 0;
+            return {
+                candidate: cleared50 ? only : null,
+                pct,
+                reason: cleared50 ? 'winner' : (only && only.votes > 0 ? 'failed_threshold' : 'no_votes'),
+            };
+        } else {
+            const top  = candidates[0];
+            const next = candidates[1];
+            const pct  = total > 0 && top ? Math.round((top.votes / total) * 100) : 0;
+            const isWinner = !!top && top.votes > 0 && (!next || top.votes > next.votes);
+            return {
+                candidate: isWinner ? top : null,
+                pct,
+                reason: isWinner ? 'winner' : 'no_votes',
+            };
+        }
+    };
+
+    const positionKeys  = ELECTION_DATA.map(c => c.dbKey);
+    const animPct       = useCountUp(turnout?.turnout_percentage ?? 0, 1200, 400);
+    const animCast      = useCountUp(turnout?.votes_cast          ?? 0, 1000, 500);
+    const animEligible  = useCountUp(turnout?.total_eligible      ?? 0, 1000, 600);
+
+    const R       = 15.9155;
     const CIRCUMF = 2 * Math.PI * R;
-    const offset = CIRCUMF - (animPct / 100) * CIRCUMF;
+    const offset  = CIRCUMF - (animPct / 100) * CIRCUMF;
 
     if (status === 'loading') return (
         <div className="flex flex-col items-center justify-center flex-1 gap-4 text-zinc-500">
@@ -132,29 +190,121 @@ const PublicResults: React.FC = () => {
                     <div className="mt-6 flex items-center justify-center gap-2">
                         <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                         <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">
-                            Accepting votes now
-                        </span>
+              Accepting votes now
+            </span>
                     </div>
                 </div>
             </div>
         </div>
     );
 
+    // ── Winner spotlight card renderer — shared by President's large
+    // spotlight and the 2-column grid for the other 6 positions ──────────
+    const renderWinnerCard = (categoryLabel: string, info: WinnerInfo, large = false) => {
+        if (info.reason === 'winner' && info.candidate) {
+            const c = info.candidate;
+            return (
+                <div className={`relative bg-white rounded-2xl border-2 border-yellow-300 overflow-hidden shadow-md ${large ? 'p-7' : 'p-5'}`}>
+                    <div className="absolute top-0 right-0 w-28 h-28 bg-yellow-400/10 rounded-full -mr-10 -mt-10" aria-hidden="true" />
+                    <div className="relative flex flex-col items-center text-center">
+                        <div className="relative mb-3">
+                            <img
+                                src={c.image}
+                                alt={c.name}
+                                onError={(e) => {
+                                    (e.target as HTMLImageElement).src =
+                                        `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=18181b&color=eab308&size=256`;
+                                }}
+                                className={`${large ? 'w-28 h-28' : 'w-20 h-20'} rounded-full object-cover border-4 border-yellow-400`}
+                            />
+                            <div className={`absolute -bottom-1 -right-1 ${large ? 'w-10 h-10' : 'w-8 h-8'} bg-yellow-400 rounded-full flex items-center justify-center border-2 border-white shadow`}>
+                                <Trophy className={large ? 'w-5 h-5 text-zinc-900' : 'w-4 h-4 text-zinc-900'} />
+                            </div>
+                        </div>
+                        <p className="text-[10px] font-black text-yellow-600 uppercase tracking-widest mb-1">
+                            {categoryLabel}
+                        </p>
+                        <p className={`font-black text-zinc-900 uppercase ${large ? 'text-xl' : 'text-sm'}`}>
+                            {c.name}
+                        </p>
+                        <p className="text-xs text-zinc-400 font-bold mt-1">
+                            {c.votes} vote{c.votes !== 1 ? 's' : ''} · {info.pct}%
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        if (info.reason === 'failed_threshold') {
+            return (
+                <div className={`bg-red-50 rounded-2xl border-2 border-red-200 ${large ? 'p-7' : 'p-5'}`}>
+                    <div className="flex flex-col items-center text-center">
+                        <div className={`${large ? 'w-20 h-20' : 'w-16 h-16'} rounded-full bg-red-100 border-2 border-red-300 flex items-center justify-center mb-3`}>
+                            <XCircle className={large ? 'w-9 h-9 text-red-500' : 'w-7 h-7 text-red-500'} />
+                        </div>
+                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-1">
+                            {categoryLabel}
+                        </p>
+                        <p className={`font-black text-red-700 uppercase ${large ? 'text-base' : 'text-sm'}`}>
+                            No Winner Confirmed
+                        </p>
+                        <p className="text-xs text-red-500 font-bold mt-1">
+                            Failed 50% Vote of Confidence ({info.pct}%)
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        // reason === 'no_votes' — neutral, not an error state
+        return (
+            <div className={`bg-zinc-50 rounded-2xl border-2 border-zinc-200 ${large ? 'p-7' : 'p-5'}`}>
+                <div className="flex flex-col items-center text-center">
+                    <div className={`${large ? 'w-20 h-20' : 'w-16 h-16'} rounded-full bg-zinc-100 border-2 border-zinc-300 flex items-center justify-center mb-3`}>
+                        <Award className={large ? 'w-9 h-9 text-zinc-400' : 'w-7 h-7 text-zinc-400'} />
+                    </div>
+                    <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">
+                        {categoryLabel}
+                    </p>
+                    <p className={`font-black text-zinc-500 uppercase ${large ? 'text-base' : 'text-sm'}`}>
+                        Awaiting Results
+                    </p>
+                </div>
+            </div>
+        );
+    };
+
+    const presidentCategory = ELECTION_DATA.find(c => c.position.toLowerCase() === 'president');
+    const otherCategories    = ELECTION_DATA.filter(c => c.position.toLowerCase() !== 'president');
+
     return (
         <div className={`w-full max-w-3xl mx-auto space-y-6 py-2 transition-all duration-500 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
 
+            {/* ── Header ─────────────────────────────────────────────────────────── */}
             <div className="text-center pb-4 border-b-2 border-zinc-200">
-                <span className="text-[10px] font-black bg-zinc-900 text-yellow-400 px-3 py-1 rounded-full uppercase tracking-widest mb-3 inline-block border border-yellow-500">
-                    Official Results
-                </span>
+        <span className="text-[10px] font-black bg-zinc-900 text-yellow-400 px-3 py-1 rounded-full uppercase tracking-widest mb-3 inline-block border border-yellow-500">
+          Official Results
+        </span>
                 <h1 className="text-3xl sm:text-4xl font-black text-zinc-900 uppercase tracking-tight mt-2">
                     USAA General Election
                 </h1>
                 <p className="text-zinc-400 text-sm font-medium mt-1">
                     Final results · Algeria 2026
                 </p>
+
+                <button
+                    onClick={handleShare}
+                    className="mt-4 inline-flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-yellow-400 text-xs font-black uppercase tracking-widest px-4 py-2 rounded-full transition-all active:scale-95"
+                >
+                    {shareCopied ? (
+                        <><Check className="w-3.5 h-3.5" /> Link Copied!</>
+                    ) : (
+                        <><Share2 className="w-3.5 h-3.5" /> Share Results</>
+                    )}
+                </button>
             </div>
 
+            {/* ── Turnout ────────────────────────────────────────────────────────── */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 
                 <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
@@ -197,7 +347,47 @@ const PublicResults: React.FC = () => {
                 </div>
             </div>
 
+            {/* ── Winner Spotlight Grid ──────────────────────────────────────────── */}
             <div className="space-y-4">
+                <div className="text-center pt-2">
+                    <h2 className="text-lg font-black text-zinc-900 uppercase tracking-tight flex items-center justify-center gap-2">
+                        <Trophy className="w-5 h-5 text-yellow-500" />
+                        Your New Leadership
+                    </h2>
+                    <p className="text-xs text-zinc-400 font-medium mt-1">
+                        Official winners across all 7 positions
+                    </p>
+                </div>
+
+                {presidentCategory && (() => {
+                    const info = getWinnerInfo(presidentCategory.dbKey);
+                    return info ? renderWinnerCard(presidentCategory.position, info, true) : null;
+                })()}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {otherCategories.map(cat => {
+                        const info = getWinnerInfo(cat.dbKey);
+                        if (!info) return null;
+                        return (
+                            <div key={cat.dbKey}>
+                                {renderWinnerCard(cat.position, info)}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* ── Full breakdown per position ─────────────────────────────────────── */}
+            <div className="space-y-4">
+                <div className="text-center pt-2">
+                    <h2 className="text-lg font-black text-zinc-900 uppercase tracking-tight">
+                        Full Results Breakdown
+                    </h2>
+                    <p className="text-xs text-zinc-400 font-medium mt-1">
+                        Complete vote counts for every candidate
+                    </p>
+                </div>
+
                 {positionKeys.map(dbKey => {
                     const result = buildResults(dbKey);
                     if (!result) return null;
@@ -210,9 +400,9 @@ const PublicResults: React.FC = () => {
                             <div className="p-5">
 
                                 <div className="flex items-center justify-between mb-4 pb-3 border-b-2 border-zinc-100">
-                                    <h2 className="text-sm font-black text-zinc-800 uppercase tracking-widest">
+                                    <h3 className="text-sm font-black text-zinc-800 uppercase tracking-widest">
                                         {label}
-                                    </h2>
+                                    </h3>
                                     <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
                                         {category?.unopposed ? 'Vote of Confidence Required' : `${total} vote${total !== 1 ? 's' : ''}`}
                                     </span>
@@ -253,7 +443,8 @@ const PublicResults: React.FC = () => {
                                             <div key={candidate.id}>
                                                 <div className="flex items-center gap-3 mb-2">
 
-                                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-50' : 'bg-zinc-100')
+                                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                                                        isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-50' : 'bg-zinc-100')
                                                     }`}>
                                                         {isWinner
                                                             ? <Trophy className="w-3.5 h-3.5 text-zinc-900" />
@@ -270,13 +461,15 @@ const PublicResults: React.FC = () => {
                                                             (e.target as HTMLImageElement).src =
                                                                 `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name)}&background=18181b&color=eab308&size=128`;
                                                         }}
-                                                        className={`w-10 h-10 rounded-full object-cover border-2 shrink-0 ${isWinner ? 'border-yellow-400' : (failedVoteOfConfidence ? 'border-red-300' : 'border-zinc-200')
+                                                        className={`w-10 h-10 rounded-full object-cover border-2 shrink-0 ${
+                                                            isWinner ? 'border-yellow-400' : (failedVoteOfConfidence ? 'border-red-300' : 'border-zinc-200')
                                                         }`}
                                                     />
 
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className={`font-black text-sm uppercase ${isWinner ? 'text-zinc-900' : (failedVoteOfConfidence ? 'text-red-700' : 'text-zinc-500')
+                                                            <span className={`font-black text-sm uppercase ${
+                                                                isWinner ? 'text-zinc-900' : (failedVoteOfConfidence ? 'text-red-700' : 'text-zinc-500')
                                                             }`}>
                                                                 {candidate.name}
                                                             </span>
@@ -294,7 +487,8 @@ const PublicResults: React.FC = () => {
                                                     </div>
 
                                                     <div className="text-right shrink-0">
-                                                        <span className={`text-2xl font-black tabular-nums ${isWinner ? 'text-yellow-600' : (failedVoteOfConfidence ? 'text-red-500' : 'text-zinc-400')
+                                                        <span className={`text-2xl font-black tabular-nums ${
+                                                            isWinner ? 'text-yellow-600' : (failedVoteOfConfidence ? 'text-red-500' : 'text-zinc-400')
                                                         }`}>
                                                             {candidate.votes}
                                                         </span>
@@ -304,7 +498,8 @@ const PublicResults: React.FC = () => {
 
                                                 <div className="ml-10 h-2.5 bg-zinc-100 rounded-full overflow-hidden">
                                                     <div
-                                                        className={`h-full rounded-full transition-all duration-700 ease-out ${isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-400' : 'bg-zinc-300')
+                                                        className={`h-full rounded-full transition-all duration-700 ease-out ${
+                                                            isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-400' : 'bg-zinc-300')
                                                         }`}
                                                         style={{ width: `${pct}%` }}
                                                     />
@@ -319,6 +514,7 @@ const PublicResults: React.FC = () => {
                 })}
             </div>
 
+            {/* ── Ballot verification ─────────────────────────────────────────────── */}
             <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
                 <div className="h-1.5 bg-zinc-900 w-full" />
                 <div className="p-6">
@@ -356,15 +552,17 @@ const PublicResults: React.FC = () => {
                     </form>
 
                     {verifyResult && (
-                        <div className={`mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border-2 ${verifyResult === 'counted'
-                            ? 'bg-green-50 border-green-200'
-                            : 'bg-red-50 border-red-200'
+                        <div className={`mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border-2 ${
+                            verifyResult === 'counted'
+                                ? 'bg-green-50 border-green-200'
+                                : 'bg-red-50 border-red-200'
                         }`}>
                             {verifyResult === 'counted'
                                 ? <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
-                                : <XCircle className="w-5 h-5 text-red-500 shrink-0" />
+                                : <XCircle     className="w-5 h-5 text-red-500 shrink-0" />
                             }
-                            <p className={`text-sm font-bold ${verifyResult === 'counted' ? 'text-green-800' : 'text-red-700'
+                            <p className={`text-sm font-bold ${
+                                verifyResult === 'counted' ? 'text-green-800' : 'text-red-700'
                             }`}>
                                 {verifyResult === 'counted'
                                     ? '✓ Your ballot was counted in the final results.'
