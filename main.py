@@ -644,6 +644,22 @@ def mask_email(email: str) -> str:
 
 @app.post("/api/request-otp")
 def request_otp(payload: OTPRequest, conn=Depends(get_db)):
+    # Block at the very first step — nobody should be able to log in,
+    # let alone reach the voting booth, while the election isn't open.
+    # Previously only cast_vote checked this, meaning a voter could log in,
+    # verify OTP, and sit in the voting booth before voting officially
+    # started — only to be blocked at the final submit step. This closes
+    # that gap at the source.
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT election_open FROM System_Settings WHERE id = 1")
+        settings = cur.fetchone()
+
+    if not settings or not bool(settings["election_open"]):
+        raise HTTPException(
+            status_code=403,
+            detail="Voting is not currently open. Please check back when the Electoral Commission opens the election."
+        )
+
     matric_number = normalize_matric_number(payload.matric_number)
     now = time.time()
     last_request = _last_otp_request_at.get(matric_number)
@@ -696,6 +712,19 @@ def request_otp(payload: OTPRequest, conn=Depends(get_db)):
 
 @app.post("/api/verify-otp")
 def verify_otp(payload: OTPVerify, conn=Depends(get_db)):
+    # Same guard as request_otp — covers the edge case where an OTP was
+    # issued right as the election opened/closed, so a voter can't complete
+    # login and reach the voting booth in that narrow window either.
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT election_open FROM System_Settings WHERE id = 1")
+        settings = cur.fetchone()
+
+    if not settings or not bool(settings["election_open"]):
+        raise HTTPException(
+            status_code=403,
+            detail="Voting is not currently open. Please check back when the Electoral Commission opens the election."
+        )
+
     matric_number = normalize_matric_number(payload.matric_number)
     attempts = _otp_attempt_counts.get(matric_number, 0)
     if attempts >= MAX_OTP_ATTEMPTS:
@@ -1381,7 +1410,7 @@ def chat_assistant(payload: ChatMessage):
             "Results are strictly confidential while voting is open — this protects the election "
             "from being influenced mid-vote. Once the Electoral Commission officially closes the "
             "polls, the full tally, turnout, and winners for all 7 positions automatically appear at: "
-            "https://ussavoting.com/election-results — no login needed to view it."
+            "https://usaavoting.com/election-results — no login needed to view it."
         )
 
     # ── 9. Unopposed candidates / abstention / blank votes ──────────────────
