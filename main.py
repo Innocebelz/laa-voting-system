@@ -657,7 +657,7 @@ def request_otp(payload: OTPRequest, conn=Depends(get_db)):
     if not settings or not bool(settings["election_open"]):
         raise HTTPException(
             status_code=403,
-            detail="Voting is not currently open. Please check back when the EC opens the election"
+            detail="Voting is closed. The link to the results page will be sent to the USAA group"
         )
 
     matric_number = normalize_matric_number(payload.matric_number)
