@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ELECTION_DATA } from '../constants';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, TrendingUp, Users, Download, Lock, Unlock, LogOut, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { Loader2, TrendingUp, Users, Download, Lock, Unlock, LogOut, RefreshCw, ShieldCheck, MinusCircle } from 'lucide-react';
 
 const BACKEND_URL = 'https://laa-voting-system.onrender.com';
 
@@ -550,9 +550,10 @@ const AdminDashboard: React.FC = () => {
                                             {candidates.map((candidate, index) => {
 
                                                 // ── THE 50% CONSTITUTIONAL RULE MATH ──────────────────
-                                                // Identical logic to the public results page — kept in
-                                                // sync so the EC's internal live view always matches
-                                                // what voters will eventually see published.
+                                                // Applies to every position, opposed or not: a candidate
+                                                // needs at least 50% of total ballots cast to be declared
+                                                // elected. If no one clears it, that's not an error state —
+                                                // just "no candidate above 50% yet."
                                                 let isWinner = false;
                                                 let failedVoteOfConfidence = false;
                                                 let isTiedCandidate = false;
@@ -561,34 +562,33 @@ const AdminDashboard: React.FC = () => {
                                                     isWinner = candidate.votes >= (totalBallotsCast / 2) && candidate.votes > 0;
                                                     failedVoteOfConfidence = !isWinner && candidate.votes > 0;
                                                 } else {
-                                                    // Competitive candidates just need a plurality — most
-                                                    // votes among the field wins. The 50% Vote of Confidence
-                                                    // rule is exclusive to unopposed races.
+                                                    // Competitive candidates need BOTH a plurality (most
+                                                    // votes among the field) AND >= 50% of total ballots
+                                                    // cast — same Vote of Confidence rule as unopposed races.
                                                     const nextCandidate = candidates[1];
                                                     const isTiedRace = !!nextCandidate && candidates[0]?.votes === nextCandidate.votes && candidates[0].votes > 0;
-                                                    isWinner = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
+                                                    const hasPlurality = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
+                                                    isWinner = hasPlurality && candidate.votes >= (totalBallotsCast / 2);
+                                                    failedVoteOfConfidence = hasPlurality && !isWinner;
                                                     isTiedCandidate = isTiedRace && index <= 1;
                                                 }
 
-                                                // Unopposed: percentage out of total ballots cast, which is
-                                                // what the 50% rule is checked against. Competitive: percentage
-                                                // out of this position's own vote total, since no ballots-cast
-                                                // threshold applies there.
-                                                const baseTotal = unopposed ? totalBallotsCast : total;
-                                                const pct = baseTotal > 0 ? Math.round((candidate.votes / baseTotal) * 100) : 0;
+                                                // Percentage always out of total ballots cast, for every
+                                                // position, matching the rule that produced each badge.
+                                                const pct = totalBallotsCast > 0 ? Math.round((candidate.votes / totalBallotsCast) * 100) : 0;
 
                                                 return (
                                                     <div key={candidate.id}>
                                                         <div className="flex items-center gap-3 mb-1.5">
 
-                                                            {/* Status badge — checkmark seal / rank / tied / failed */}
+                                                            {/* Status badge — checkmark seal / rank / tied / below-threshold */}
                                                             <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                                                                isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-50' : (isTiedCandidate ? 'bg-orange-50' : 'bg-zinc-100'))
+                                                                isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-zinc-100' : (isTiedCandidate ? 'bg-orange-50' : 'bg-zinc-100'))
                                                             }`}>
                                                                 {isWinner
                                                                     ? <ShieldCheck className="w-3.5 h-3.5 text-zinc-900" />
                                                                     : (failedVoteOfConfidence
-                                                                        ? <XCircle className="w-3.5 h-3.5 text-red-500" />
+                                                                        ? <MinusCircle className="w-3.5 h-3.5 text-zinc-400" />
                                                                         : (isTiedCandidate
                                                                             ? <Users className="w-3.5 h-3.5 text-orange-500" />
                                                                             : <span className="text-[11px] font-black text-zinc-500">{index + 1}</span>))
@@ -604,14 +604,14 @@ const AdminDashboard: React.FC = () => {
                                                                         `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name)}&background=18181b&color=eab308&size=64`;
                                                                 }}
                                                                 className={`w-9 h-9 rounded-full object-cover border-2 shrink-0 ${
-                                                                    isWinner ? 'border-yellow-400' : (failedVoteOfConfidence ? 'border-red-300' : (isTiedCandidate ? 'border-orange-300' : 'border-zinc-200'))
+                                                                    isWinner ? 'border-yellow-400' : (failedVoteOfConfidence ? 'border-zinc-300' : (isTiedCandidate ? 'border-orange-300' : 'border-zinc-200'))
                                                                 }`}
                                                             />
 
                                                             {/* Name + winner/failed tag */}
                                                             <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
                                                                 <span className={`font-black text-sm truncate uppercase ${
-                                                                    isWinner ? 'text-zinc-900' : (failedVoteOfConfidence ? 'text-red-700' : (isTiedCandidate ? 'text-orange-700' : 'text-zinc-500'))
+                                                                    isWinner ? 'text-zinc-900' : (failedVoteOfConfidence ? 'text-zinc-500' : (isTiedCandidate ? 'text-orange-700' : 'text-zinc-500'))
                                                                 }`}>
                                                                     {candidate.name}
                                                                 </span>
@@ -621,8 +621,8 @@ const AdminDashboard: React.FC = () => {
                                                                     </span>
                                                                 )}
                                                                 {failedVoteOfConfidence && (
-                                                                    <span className="text-[9px] font-black bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
-                                                                        Failed 50%
+                                                                    <span className="text-[9px] font-black bg-zinc-100 text-zinc-500 border border-zinc-200 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                                                        No Candidate Above 50%
                                                                     </span>
                                                                 )}
                                                                 {isTiedCandidate && (
@@ -635,7 +635,7 @@ const AdminDashboard: React.FC = () => {
                                                             {/* Votes + pct */}
                                                             <div className="text-right shrink-0">
                                                             <span className={`text-xl font-black tabular-nums ${
-                                                                isWinner ? 'text-yellow-600' : (failedVoteOfConfidence ? 'text-red-500' : (isTiedCandidate ? 'text-orange-500' : 'text-zinc-400'))
+                                                                isWinner ? 'text-yellow-600' : (failedVoteOfConfidence ? 'text-zinc-400' : (isTiedCandidate ? 'text-orange-500' : 'text-zinc-400'))
                                                             }`}>
                                                                 {candidate.votes}
                                                             </span>
@@ -649,7 +649,7 @@ const AdminDashboard: React.FC = () => {
                                                         <div className="ml-9 h-2 bg-zinc-100 rounded-full overflow-hidden">
                                                             <div
                                                                 className={`h-full rounded-full transition-all duration-700 ease-out ${
-                                                                    isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-red-400' : (isTiedCandidate ? 'bg-orange-400' : 'bg-zinc-300'))
+                                                                    isWinner ? 'bg-yellow-400' : (failedVoteOfConfidence ? 'bg-zinc-300' : (isTiedCandidate ? 'bg-orange-400' : 'bg-zinc-300'))
                                                                 }`}
                                                                 style={{ width: `${pct}%` }}
                                                             />
