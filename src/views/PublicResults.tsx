@@ -146,22 +146,13 @@ const PublicResults: React.FC = () => {
         }
     };
 
+    // General-election results — always reflects the ORIGINAL first-round
+    // tally for every position, including President and Minister of
+    // Education. This never gets swapped out for runoff data — the runoff
+    // is shown as its own separate section further down the page, so
+    // visitors can see both what happened in round one AND the runoff
+    // outcome side by side, instead of one replacing the other.
     const buildResults = (dbKey: string) => {
-        // Once a runoff has been CLOSED for this position, its 2-candidate
-        // runoff tally is the final word — show that instead of the
-        // stalemated first-round breakdown.
-        if (runoff?.active && runoff.positions.includes(dbKey) && !runoff.open && runoff.results) {
-            const category = RUNOFF_ELECTION_DATA.find(c => c.dbKey === dbKey);
-            if (!category) return null;
-            const raw     = runoff.results[dbKey] ?? [];
-            const voteMap = Object.fromEntries(raw.map(r => [r.candidate_id, r.votes]));
-            const total   = raw.reduce((s, r) => s + r.votes, 0);
-            const candidates = category.candidates
-                .map(c => ({ ...c, votes: voteMap[c.id] ?? 0 }))
-                .sort((a, b) => b.votes - a.votes);
-            return { label: `${category.position} (Runoff)`, candidates, total };
-        }
-
         const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
         if (!category || !tally) return null;
         const raw      = tally[dbKey] ?? [];
@@ -173,40 +164,27 @@ const PublicResults: React.FC = () => {
         return { label: category.position, candidates, total };
     };
 
+    // Runoff-election results — only ever has data for the 2 runoff
+    // positions, and only once the runoff has closed. Used exclusively by
+    // the dedicated "Runoff Election" section below.
+    const buildRunoffResults = (dbKey: string) => {
+        if (!runoff?.results) return null;
+        const category = RUNOFF_ELECTION_DATA.find(c => c.dbKey === dbKey);
+        if (!category) return null;
+        const raw     = runoff.results[dbKey] ?? [];
+        const voteMap = Object.fromEntries(raw.map(r => [r.candidate_id, r.votes]));
+        const total   = raw.reduce((s, r) => s + r.votes, 0);
+        const candidates = category.candidates
+            .map(c => ({ ...c, votes: voteMap[c.id] ?? 0 }))
+            .sort((a, b) => b.votes - a.votes);
+        return { label: category.position, candidates, total };
+    };
+
     // ── Single source of truth for "who won this position" ──────────────
     // Used by BOTH the winner spotlight grid and the detailed breakdown
     // below, so the two sections can never disagree with each other.
+    // Always reflects the ORIGINAL first-round result — see buildResults.
     const getWinnerInfo = (dbKey: string): WinnerInfo | null => {
-        // Runoff-eligible position, and a runoff has actually been started
-        if (runoff?.active && runoff.positions.includes(dbKey)) {
-            // Still collecting runoff votes (or opened but not yet closed) —
-            // no result to show yet.
-            if (runoff.open || !runoff.results) {
-                return { candidate: null, pct: 0, reason: 'runoff_pending' };
-            }
-
-            const result = buildResults(dbKey);
-            if (!result) return null;
-            const { candidates } = result;
-            const totalBallotsCast = runoff.turnout?.total_ballots_cast ?? runoff.turnout?.votes_cast ?? 0;
-
-            const top  = candidates[0];
-            const next = candidates[1];
-            const pct  = totalBallotsCast > 0 && top ? Math.round((top.votes / totalBallotsCast) * 100) : 0;
-
-            const isTied       = !!top && !!next && top.votes === next.votes && top.votes > 0;
-            const hasPlurality = !!top && top.votes > 0 && !isTied && (!next || top.votes > next.votes);
-            const cleared50    = hasPlurality && top.votes >= (totalBallotsCast / 2);
-
-            return {
-                candidate: cleared50 ? top : null,
-                pct,
-                reason: cleared50
-                    ? 'winner'
-                    : (isTied ? 'tied' : (hasPlurality ? 'failed_threshold' : 'no_votes')),
-            };
-        }
-
         const result   = buildResults(dbKey);
         const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
         if (!result || !category) return null;
@@ -244,6 +222,36 @@ const PublicResults: React.FC = () => {
                     : (isTied ? 'tied' : (hasPlurality ? 'failed_threshold' : 'no_votes')),
             };
         }
+    };
+
+    // Winner logic for the dedicated Runoff section only — a simple 2-way
+    // race, so it's just plurality + the same 50% Vote of Confidence rule.
+    const getRunoffWinnerInfo = (dbKey: string): WinnerInfo | null => {
+        if (!runoff?.active || !runoff.positions.includes(dbKey)) return null;
+        if (runoff.open || !runoff.results) {
+            return { candidate: null, pct: 0, reason: 'runoff_pending' };
+        }
+
+        const result = buildRunoffResults(dbKey);
+        if (!result) return null;
+        const { candidates } = result;
+        const totalBallotsCast = runoff.turnout?.total_ballots_cast ?? runoff.turnout?.votes_cast ?? 0;
+
+        const top  = candidates[0];
+        const next = candidates[1];
+        const pct  = totalBallotsCast > 0 && top ? Math.round((top.votes / totalBallotsCast) * 100) : 0;
+
+        const isTied       = !!top && !!next && top.votes === next.votes && top.votes > 0;
+        const hasPlurality = !!top && top.votes > 0 && !isTied && (!next || top.votes > next.votes);
+        const cleared50    = hasPlurality && top.votes >= (totalBallotsCast / 2);
+
+        return {
+            candidate: cleared50 ? top : null,
+            pct,
+            reason: cleared50
+                ? 'winner'
+                : (isTied ? 'tied' : (hasPlurality ? 'failed_threshold' : 'no_votes')),
+        };
     };
 
     const positionKeys  = ELECTION_DATA.map(c => c.dbKey);
@@ -514,6 +522,143 @@ const PublicResults: React.FC = () => {
                     })}
                 </div>
             </div>
+
+            {/* ── Runoff Election ──────────────────────────────────────────────────
+                Separate from the spotlight/breakdown above — shows the runoff
+                status/result for President & Minister of Education alongside
+                (never instead of) their original first-round numbers. */}
+            {runoff?.active && (
+                <div className="space-y-4">
+                    <div className="text-center pt-2">
+                        <h2 className="text-lg font-black text-zinc-900 uppercase tracking-tight flex items-center justify-center gap-2">
+                            <Vote className="w-5 h-5 text-orange-500" />
+                            Runoff Election
+                        </h2>
+                        <p className="text-xs text-zinc-400 font-medium mt-1">
+                            President & Minister of Education — no candidate reached 50% in round one
+                        </p>
+                    </div>
+
+                    {runoff.turnout && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
+                                <div className="h-1 bg-zinc-200" />
+                                <div className="p-5 flex flex-col items-center text-center">
+                                    <Users className="w-5 h-5 text-zinc-300 mb-1.5" />
+                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Total Eligible</span>
+                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{runoff.turnout.total_eligible}</span>
+                                </div>
+                            </div>
+                            <div className="bg-white rounded-2xl border-2 border-orange-200 overflow-hidden">
+                                <div className="h-1 bg-orange-400" />
+                                <div className="p-5 flex flex-col items-center text-center">
+                                    <TrendingUp className="w-5 h-5 text-orange-400 mb-1.5" />
+                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Runoff Votes Cast</span>
+                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{runoff.turnout.votes_cast}</span>
+                                </div>
+                            </div>
+                            <div className="bg-white rounded-2xl border-2 border-orange-200 overflow-hidden">
+                                <div className="h-1 bg-orange-400" />
+                                <div className="p-5 flex flex-col items-center text-center justify-center">
+                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{runoff.turnout.turnout_percentage}%</span>
+                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-1">Runoff Turnout</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {runoff.positions.map(posKey => {
+                            const info = getRunoffWinnerInfo(posKey);
+                            const category = RUNOFF_ELECTION_DATA.find(c => c.dbKey === posKey);
+                            if (!info || !category) return null;
+                            return (
+                                <div key={posKey}>
+                                    {renderWinnerCard(category.position, info)}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Runoff breakdown — only once closed */}
+                    {!runoff.open && runoff.results && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {runoff.positions.map(posKey => {
+                                const result = buildRunoffResults(posKey);
+                                if (!result) return null;
+                                const { label, candidates, total } = result;
+                                const totalBallotsCast = runoff.turnout?.total_ballots_cast ?? total;
+
+                                return (
+                                    <div key={posKey} className="bg-white rounded-2xl border-2 border-orange-200 overflow-hidden">
+                                        <div className="h-1 bg-orange-400" />
+                                        <div className="p-5">
+                                            <div className="flex items-center justify-between mb-4 pb-3 border-b-2 border-zinc-100">
+                                                <h3 className="text-sm font-black text-zinc-800 uppercase tracking-widest">{label} · Runoff</h3>
+                                                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+                                                    {total} vote{total !== 1 ? 's' : ''}
+                                                </span>
+                                            </div>
+                                            <div className="space-y-4">
+                                                {candidates.map((candidate, index) => {
+                                                    const nextCandidate = candidates[1];
+                                                    const isTiedRace = !!nextCandidate && candidates[0]?.votes === nextCandidate.votes && candidates[0].votes > 0;
+                                                    const hasPlurality = index === 0 && candidate.votes > 0 && !isTiedRace && (!nextCandidate || candidate.votes > nextCandidate.votes);
+                                                    const isWinner = hasPlurality && candidate.votes >= (totalBallotsCast / 2);
+                                                    const pct = totalBallotsCast > 0 ? Math.round((candidate.votes / totalBallotsCast) * 100) : 0;
+
+                                                    return (
+                                                        <div key={candidate.id}>
+                                                            <div className="flex items-center gap-3 mb-1.5">
+                                                                <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isWinner ? 'bg-yellow-400' : 'bg-zinc-100'}`}>
+                                                                    {isWinner
+                                                                        ? <ShieldCheck className="w-3.5 h-3.5 text-zinc-900" />
+                                                                        : <span className="text-[11px] font-black text-zinc-500">{index + 1}</span>}
+                                                                </span>
+                                                                <img
+                                                                    src={candidate.image}
+                                                                    alt={candidate.name}
+                                                                    onError={(e) => {
+                                                                        (e.target as HTMLImageElement).src =
+                                                                            `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name)}&background=18181b&color=eab308&size=64`;
+                                                                    }}
+                                                                    className={`w-9 h-9 rounded-full object-cover border-2 shrink-0 ${isWinner ? 'border-yellow-400' : 'border-zinc-200'}`}
+                                                                />
+                                                                <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                                                                    <span className={`font-black text-sm truncate uppercase ${isWinner ? 'text-zinc-900' : 'text-zinc-500'}`}>
+                                                                        {candidate.name}
+                                                                    </span>
+                                                                    {isWinner && (
+                                                                        <span className="text-[9px] font-black bg-yellow-400 text-zinc-900 px-1.5 py-0.5 rounded-full uppercase tracking-widest shrink-0">
+                                                                            Elected
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="text-right shrink-0">
+                                                                    <span className={`text-xl font-black tabular-nums ${isWinner ? 'text-yellow-600' : 'text-zinc-400'}`}>
+                                                                        {candidate.votes}
+                                                                    </span>
+                                                                    <span className="text-[10px] font-bold text-zinc-400 ml-1 uppercase">{pct}%</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="ml-9 h-2 bg-zinc-100 rounded-full overflow-hidden">
+                                                                <div
+                                                                    className={`h-full rounded-full transition-all duration-700 ease-out ${isWinner ? 'bg-yellow-400' : 'bg-zinc-300'}`}
+                                                                    style={{ width: `${pct}%` }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* ── Full breakdown per position ─────────────────────────────────────── */}
             <div className="space-y-4">

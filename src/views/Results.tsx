@@ -39,6 +39,87 @@ function useCountUp(target: number, duration = 1400, delay = 200) {
   return value;
 }
 
+// ── Reusable turnout ring, so general + runoff cards don't duplicate markup ──
+interface TurnoutRingProps {
+  label: string;
+  pct: number;
+  cast: number;
+  total: number;
+  accent: 'yellow' | 'orange';
+}
+const TurnoutRing: React.FC<TurnoutRingProps> = ({ label, pct, cast, total, accent }) => {
+  const RADIUS    = 15.9155;
+  const CIRCUMF   = 2 * Math.PI * RADIUS;
+  const arcOffset = CIRCUMF - (pct / 100) * CIRCUMF;
+  const stroke    = accent === 'orange' ? '#f97316' : '#eab308';
+  const barClass  = accent === 'orange' ? 'bg-orange-500' : 'bg-yellow-500';
+  const pctTextClass = accent === 'orange' ? 'text-orange-600' : 'text-yellow-600';
+
+  return (
+      <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden shadow-sm">
+        <div className={`h-1.5 w-full ${accent === 'orange' ? 'bg-orange-500' : 'bg-yellow-500'}`} />
+        <div className="p-6">
+          <p className="text-xs font-black text-zinc-400 uppercase tracking-widest mb-6">
+            {label}
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-center gap-6 mb-6">
+            <div className="relative w-44 h-44 shrink-0">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r={RADIUS} fill="none" stroke="#f4f4f5" strokeWidth="3" />
+                <circle
+                    cx="18" cy="18" r={RADIUS}
+                    fill="none"
+                    stroke={stroke}
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeDasharray={`${CIRCUMF} ${CIRCUMF}`}
+                    strokeDashoffset={arcOffset}
+                    style={{ transition: 'stroke-dashoffset 0.05s linear' }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-4xl font-black text-zinc-900 leading-none">{pct}%</span>
+                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-1">Participation</span>
+              </div>
+            </div>
+
+            <div className="flex-1 w-full space-y-3">
+              <div className="bg-zinc-50 rounded-xl border border-zinc-200 p-4 flex justify-between items-center">
+                <div>
+                  <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Votes Cast</p>
+                  <p className="text-3xl font-black text-zinc-900 tabular-nums">{cast}</p>
+                </div>
+                <TrendingUp className={`w-8 h-8 ${accent === 'orange' ? 'text-orange-400' : 'text-yellow-400'}`} />
+              </div>
+              <div className="bg-zinc-50 rounded-xl border border-zinc-200 p-4 flex justify-between items-center">
+                <div>
+                  <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Total Eligible</p>
+                  <p className="text-3xl font-black text-zinc-900 tabular-nums">{total}</p>
+                </div>
+                <Users className="w-8 h-8 text-zinc-300" />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex justify-between mb-1.5">
+              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Voter Participation</span>
+              <span className={`text-[10px] font-black uppercase tracking-widest ${pctTextClass}`}>{pct}%</span>
+            </div>
+            <div className="h-2.5 bg-zinc-100 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full transition-all duration-75 ${barClass}`} style={{ width: `${pct}%` }} />
+            </div>
+            <div className="flex justify-between mt-1">
+              <span className="text-[10px] text-zinc-400 font-semibold">0</span>
+              <span className="text-[10px] text-zinc-400 font-semibold">{total}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+  );
+};
+
 const Results: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -55,6 +136,17 @@ const Results: React.FC = () => {
     turnout_percentage: 0,
   });
 
+  // Runoff turnout — shown alongside the general turnout once a runoff has
+  // been started, regardless of which round this particular voter cast
+  // their ballot in (so a general-round voter can still see runoff progress
+  // if they revisit this page, and vice versa).
+  const [runoffTurnoutData, setRunoffTurnoutData] = useState<{
+    started: boolean;
+    total_eligible: number;
+    votes_cast: number;
+    turnout_percentage: number;
+  }>({ started: false, total_eligible: 0, votes_cast: 0, turnout_percentage: 0 });
+
   // Fade-in on mount
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), 30);
@@ -65,14 +157,30 @@ const Results: React.FC = () => {
   useEffect(() => {
     const fetchTurnout = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/results/turnout`);
-        if (res.ok) {
-          const data = await res.json();
+        const [genRes, runoffRes] = await Promise.all([
+          fetch(`${BACKEND_URL}/api/results/turnout`),
+          fetch(`${BACKEND_URL}/api/results/runoff-turnout`),
+        ]);
+        if (genRes.ok) {
+          const data = await genRes.json();
           setTurnoutData({
             total_eligible:     data.total_eligible,
             votes_cast:         data.votes_cast,
             turnout_percentage: data.turnout_percentage,
           });
+        }
+        if (runoffRes.ok) {
+          const data = await runoffRes.json();
+          if (data.started) {
+            setRunoffTurnoutData({
+              started: true,
+              total_eligible:     data.total_eligible,
+              votes_cast:         data.votes_cast,
+              turnout_percentage: data.turnout_percentage,
+            });
+          } else {
+            setRunoffTurnoutData(prev => ({ ...prev, started: false }));
+          }
         }
       } catch (err) {
         console.error('Failed to fetch turnout:', err);
@@ -85,15 +193,15 @@ const Results: React.FC = () => {
 
   const { total_eligible, votes_cast, turnout_percentage } = turnoutData;
 
-  // Animated numbers
+  // Animated numbers — general
   const animPct   = useCountUp(turnout_percentage, 1400, 300);
   const animCast  = useCountUp(votes_cast,         1200, 400);
   const animTotal = useCountUp(total_eligible,     1200, 500);
 
-  // Arc for the circular progress ring
-  const RADIUS      = 15.9155;
-  const CIRCUMF     = 2 * Math.PI * RADIUS;   // ≈ 100
-  const arcOffset   = CIRCUMF - (animPct / 100) * CIRCUMF;
+  // Animated numbers — runoff
+  const animPctR   = useCountUp(runoffTurnoutData.turnout_percentage, 1400, 300);
+  const animCastR  = useCountUp(runoffTurnoutData.votes_cast,         1200, 400);
+  const animTotalR = useCountUp(runoffTurnoutData.total_eligible,     1200, 500);
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
@@ -162,84 +270,12 @@ const Results: React.FC = () => {
             </div>
         )}
 
-        {/* ── Turnout card ─────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden shadow-sm">
-          <div className="h-1.5 bg-yellow-500 w-full" />
-          <div className="p-6">
-            <p className="text-xs font-black text-zinc-400 uppercase tracking-widest mb-6">
-              Live Turnout Metrics
-            </p>
+        {/* ── Turnout card(s) ──────────────────────────────────────────────── */}
+        <TurnoutRing label="Live Turnout Metrics · General Election" pct={animPct} cast={animCast} total={animTotal} accent="yellow" />
 
-            {/* Circular progress ring */}
-            <div className="flex flex-col sm:flex-row items-center gap-6 mb-6">
-              <div className="relative w-44 h-44 shrink-0">
-                <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
-                  {/* Track */}
-                  <circle
-                      cx="18" cy="18" r={RADIUS}
-                      fill="none"
-                      stroke="#f4f4f5"
-                      strokeWidth="3"
-                  />
-                  {/* Animated arc */}
-                  <circle
-                      cx="18" cy="18" r={RADIUS}
-                      fill="none"
-                      stroke="#eab308"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeDasharray={`${CIRCUMF} ${CIRCUMF}`}
-                      strokeDashoffset={arcOffset}
-                      style={{ transition: 'stroke-dashoffset 0.05s linear' }}
-                  />
-                </svg>
-                {/* Centre label */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-4xl font-black text-zinc-900 leading-none">{animPct}%</span>
-                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-1">
-                  Participation
-                </span>
-                </div>
-              </div>
-
-              {/* Stats */}
-              <div className="flex-1 w-full space-y-3">
-                <div className="bg-zinc-50 rounded-xl border border-zinc-200 p-4 flex justify-between items-center">
-                  <div>
-                    <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Votes Cast</p>
-                    <p className="text-3xl font-black text-zinc-900 tabular-nums">{animCast}</p>
-                  </div>
-                  <TrendingUp className="w-8 h-8 text-yellow-400" />
-                </div>
-                <div className="bg-zinc-50 rounded-xl border border-zinc-200 p-4 flex justify-between items-center">
-                  <div>
-                    <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Total Eligible</p>
-                    <p className="text-3xl font-black text-zinc-900 tabular-nums">{animTotal}</p>
-                  </div>
-                  <Users className="w-8 h-8 text-zinc-300" />
-                </div>
-              </div>
-            </div>
-
-            {/* Progress bar */}
-            <div>
-              <div className="flex justify-between mb-1.5">
-                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Voter Participation</span>
-                <span className="text-[10px] font-black text-yellow-600 uppercase tracking-widest">{animPct}%</span>
-              </div>
-              <div className="h-2.5 bg-zinc-100 rounded-full overflow-hidden">
-                <div
-                    className="h-full bg-yellow-500 rounded-full transition-all duration-75"
-                    style={{ width: `${animPct}%` }}
-                />
-              </div>
-              <div className="flex justify-between mt-1">
-                <span className="text-[10px] text-zinc-400 font-semibold">0</span>
-                <span className="text-[10px] text-zinc-400 font-semibold">{total_eligible}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        {runoffTurnoutData.started && (
+            <TurnoutRing label="Live Turnout Metrics · Runoff Election" pct={animPctR} cast={animCastR} total={animTotalR} accent="orange" />
+        )}
 
         {/* ── Your ballot summary ───────────────────────────────────────────── */}
         <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden shadow-sm">

@@ -712,10 +712,10 @@ def request_otp(payload: OTPRequest, conn=Depends(get_db)):
     # started — only to be blocked at the final submit step. This closes
     # that gap at the source.
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT election_open FROM System_Settings WHERE id = 1")
+        cur.execute("SELECT election_open, runoff_open FROM System_Settings WHERE id = 1")
         settings = cur.fetchone()
 
-    if not settings or not bool(settings["election_open"]):
+    if not settings or not bool(settings["election_open"]) or bool(settings.get("runoff_open")):
         raise HTTPException(
             status_code=403,
             detail="Voting is closed. The link to the results page will be sent to the USAA group"
@@ -777,10 +777,10 @@ def verify_otp(payload: OTPVerify, conn=Depends(get_db)):
     # issued right as the election opened/closed, so a voter can't complete
     # login and reach the voting booth in that narrow window either.
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT election_open FROM System_Settings WHERE id = 1")
+        cur.execute("SELECT election_open, runoff_open FROM System_Settings WHERE id = 1")
         settings = cur.fetchone()
 
-    if not settings or not bool(settings["election_open"]):
+    if not settings or not bool(settings["election_open"]) or bool(settings.get("runoff_open")):
         raise HTTPException(
             status_code=403,
             detail="Voting is not currently open. Please check back when the Electoral Commission opens the election."
@@ -870,10 +870,10 @@ def cast_vote(payload: VotePayload, authorization: Optional[str] = Header(None),
     require_vote_session(matric_number, authorization)
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT election_open FROM System_Settings WHERE id = 1")
+        cur.execute("SELECT election_open, runoff_open FROM System_Settings WHERE id = 1")
         settings = cur.fetchone()
 
-    if not settings or not bool(settings["election_open"]):
+    if not settings or not bool(settings["election_open"]) or bool(settings.get("runoff_open")):
         raise HTTPException(status_code=403, detail="The election is currently closed.")
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1201,6 +1201,37 @@ def get_turnout(conn=Depends(get_db)):
     }
 
 
+@app.get("/api/results/runoff-turnout")
+def get_runoff_turnout_public(conn=Depends(get_db)):
+    """Public, live runoff turnout numbers — same visibility rule as the
+    general election's /api/results/turnout: turnout counts are never
+    secret, only candidate-level tallies are held back until closed."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT runoff_started FROM System_Settings WHERE id = 1")
+        settings = cur.fetchone() or {}
+
+    if not bool(settings.get("runoff_started")):
+        return {"status": "success", "started": False}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT COUNT(*) as count FROM Voters")
+        total = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) as count FROM Voters WHERE has_voted_runoff = TRUE")
+        voted = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) as ballot_count FROM Runoff_Ballots")
+        total_ballots_cast = cur.fetchone()["ballot_count"]
+
+    percentage = round((voted / total) * 100) if total > 0 else 0
+    return {
+        "status": "success",
+        "started": True,
+        "total_eligible": total,
+        "votes_cast": voted,
+        "total_ballots_cast": total_ballots_cast,
+        "turnout_percentage": percentage,
+    }
+
+
 @app.get("/api/admin/integrity-check")
 def pre_election_integrity_check(conn=Depends(get_db), admin=Depends(require_admin)):
     """
@@ -1356,15 +1387,26 @@ def get_public_results(conn=Depends(get_db)):
         "turnout":   None,
     }
 
-    # Only reveal runoff results once it has closed — same "no peeking while
-    # voting is open" rule the general election follows.
-    if runoff_started and not runoff_open:
+    # Turnout is live/public the moment a runoff starts — same as the general
+    # election's turnout being visible while voting is still open. Only the
+    # candidate-level tally is held back until the runoff closes.
+    if runoff_started:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT COUNT(*) as voted FROM Voters WHERE has_voted_runoff = TRUE")
             runoff_voted = cur.fetchone()["voted"]
             cur.execute("SELECT COUNT(*) as ballot_count FROM Runoff_Ballots")
             runoff_ballot_count = cur.fetchone()["ballot_count"]
 
+        runoff_payload["turnout"] = {
+            "total_eligible":     total,
+            "votes_cast":         runoff_voted,
+            "total_ballots_cast": runoff_ballot_count,
+            "turnout_percentage": round((runoff_voted / total * 100)) if total > 0 else 0,
+        }
+
+    # Only reveal the runoff TALLY once it has closed — same "no peeking
+    # while voting is open" rule the general election follows.
+    if runoff_started and not runoff_open:
         runoff_tally = {}
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             for pos in RUNOFF_POSITIONS:
@@ -1379,12 +1421,6 @@ def get_public_results(conn=Depends(get_db)):
                 ]
 
         runoff_payload["results"] = runoff_tally
-        runoff_payload["turnout"] = {
-            "total_eligible":     total,
-            "votes_cast":         runoff_voted,
-            "total_ballots_cast": runoff_ballot_count,
-            "turnout_percentage": round((runoff_voted / total * 100)) if total > 0 else 0,
-        }
 
     return {
         "status": "closed",
@@ -1514,6 +1550,20 @@ def get_status(conn=Depends(get_db), _admin=Depends(require_admin)):
 
 @app.post("/api/admin/status")
 def update_status(payload: StatusUpdate, request: Request, conn=Depends(get_db), admin=Depends(require_admin)):
+    # General and runoff voting are never allowed open at the same time —
+    # a voter's login/vote could otherwise land on either ballot depending
+    # on timing, and one could vote in both. Closing is always allowed;
+    # only OPENING is blocked while the other is open.
+    if payload.election_open:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT runoff_open FROM System_Settings WHERE id = 1")
+            settings = cur.fetchone() or {}
+        if bool(settings.get("runoff_open")):
+            raise HTTPException(
+                status_code=409,
+                detail="The runoff election is currently open. Close the runoff before reopening the general election."
+            )
+
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE System_Settings SET election_open = %s WHERE id = 1",
@@ -1561,6 +1611,19 @@ def update_runoff_status(payload: RunoffStatusUpdate, request: Request, conn=Dep
     level as opening/closing the general election. Opening the runoff for
     the first time also permanently flips runoff_started to TRUE, which is
     what unlocks the runoff results/tally being shown at all."""
+    # Same mutual-exclusion rule as update_status above, checked from the
+    # other side: don't allow opening the runoff while general voting is
+    # still open.
+    if payload.runoff_open:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT election_open FROM System_Settings WHERE id = 1")
+            settings = cur.fetchone() or {}
+        if bool(settings.get("election_open")):
+            raise HTTPException(
+                status_code=409,
+                detail="The general election is currently open. Close it before opening the runoff."
+            )
+
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE System_Settings SET runoff_open = %s, "

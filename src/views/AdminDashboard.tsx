@@ -51,6 +51,7 @@ const AdminDashboard: React.FC = () => {
     const [lastRefreshed, setLastRefreshed]   = useState<Date | null>(null);
     const [visible, setVisible]               = useState(false);
     const [confirmToggle, setConfirmToggle]   = useState(false);
+    const [toggleError, setToggleError]       = useState<string | null>(null);
 
     // Runoff election — President & Minister of Education only. Mirrors the
     // general-election state above but reads/writes the /api/admin/runoff/*
@@ -195,6 +196,7 @@ const AdminDashboard: React.FC = () => {
     const toggleRunoffStatus = async () => {
         setConfirmRunoffToggle(false);
         setRunoffActionLoading(true);
+        setToggleError(null);
         try {
             const res = await fetch(`${BACKEND_URL}/api/admin/runoff/status`, {
                 method:  'POST',
@@ -203,9 +205,15 @@ const AdminDashboard: React.FC = () => {
             });
             if (res.status === 401) { handleSessionExpired(); return; }
             const data = await res.json();
-            if (data.status === 'success') { setRunoffOpen(data.runoff_open); setRunoffStarted(true); }
+            if (res.ok && data.status === 'success') {
+                setRunoffOpen(data.runoff_open);
+                setRunoffStarted(true);
+            } else {
+                setToggleError(data.detail || 'Failed to update the runoff status.');
+            }
         } catch (err) {
             console.error('Failed to toggle runoff status:', err);
+            setToggleError('Failed to reach the server. Please try again.');
         } finally {
             setRunoffActionLoading(false);
         }
@@ -214,6 +222,7 @@ const AdminDashboard: React.FC = () => {
     const toggleElectionStatus = async () => {
         setConfirmToggle(false);
         setActionLoading(true);
+        setToggleError(null);
         try {
             const res = await fetch(`${BACKEND_URL}/api/admin/status`, {
                 method:  'POST',
@@ -222,9 +231,14 @@ const AdminDashboard: React.FC = () => {
             });
             if (res.status === 401) { handleSessionExpired(); return; }
             const data = await res.json();
-            if (data.status === 'success') setIsElectionOpen(data.election_open);
+            if (res.ok && data.status === 'success') {
+                setIsElectionOpen(data.election_open);
+            } else {
+                setToggleError(data.detail || 'Failed to update the election status.');
+            }
         } catch (err) {
             console.error('Failed to toggle election status:', err);
+            setToggleError('Failed to reach the server. Please try again.');
         } finally {
             setActionLoading(false);
         }
@@ -468,22 +482,38 @@ const AdminDashboard: React.FC = () => {
                                     </button>
                                 </div>
                             ) : (
-                                <button
-                                    onClick={() => setConfirmToggle(true)}
-                                    className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest transition-all border-2 active:scale-95 ${
-                                        isElectionOpen
-                                            ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
-                                            : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-                                    }`}
-                                >
-                                    {isElectionOpen
-                                        ? <><Lock className="w-4 h-4" /> Close Election</>
-                                        : <><Unlock className="w-4 h-4" /> Open Election</>
-                                    }
-                                </button>
+                                <div className="flex flex-col items-end gap-1">
+                                    <button
+                                        onClick={() => setConfirmToggle(true)}
+                                        disabled={!isElectionOpen && runoffOpen}
+                                        title={!isElectionOpen && runoffOpen ? 'Close the runoff first' : undefined}
+                                        className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest transition-all border-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
+                                            isElectionOpen
+                                                ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                                                : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                                        }`}
+                                    >
+                                        {isElectionOpen
+                                            ? <><Lock className="w-4 h-4" /> Close Election</>
+                                            : <><Unlock className="w-4 h-4" /> Open Election</>
+                                        }
+                                    </button>
+                                    {!isElectionOpen && runoffOpen && (
+                                        <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest">
+                                            Close the runoff first
+                                        </span>
+                                    )}
+                                </div>
                             )}
                         </div>
                     </div>
+                    {toggleError && (
+                        <div className="px-4 pb-4 -mt-2">
+                            <p className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                {toggleError}
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 {/* ── Turnout stats ───────────────────────────────────────────── */}
@@ -786,19 +816,28 @@ const AdminDashboard: React.FC = () => {
                                     </button>
                                 </div>
                             ) : (
-                                <button
-                                    onClick={() => setConfirmRunoffToggle(true)}
-                                    className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest transition-all border-2 active:scale-95 ${
-                                        runoffOpen
-                                            ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
-                                            : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-                                    }`}
-                                >
-                                    {runoffOpen
-                                        ? <><Lock className="w-4 h-4" /> Close Runoff</>
-                                        : <><Unlock className="w-4 h-4" /> {runoffStarted ? 'Reopen' : 'Open'} Runoff</>
-                                    }
-                                </button>
+                                <div className="flex flex-col items-end gap-1">
+                                    <button
+                                        onClick={() => setConfirmRunoffToggle(true)}
+                                        disabled={!runoffOpen && isElectionOpen}
+                                        title={!runoffOpen && isElectionOpen ? 'Close the general election first' : undefined}
+                                        className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest transition-all border-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
+                                            runoffOpen
+                                                ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                                                : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                                        }`}
+                                    >
+                                        {runoffOpen
+                                            ? <><Lock className="w-4 h-4" /> Close Runoff</>
+                                            : <><Unlock className="w-4 h-4" /> {runoffStarted ? 'Reopen' : 'Open'} Runoff</>
+                                        }
+                                    </button>
+                                    {!runoffOpen && isElectionOpen && (
+                                        <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest">
+                                            Close the general election first
+                                        </span>
+                                    )}
+                                </div>
                             )
                         ) : (
                             <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
@@ -806,6 +845,13 @@ const AdminDashboard: React.FC = () => {
                             </span>
                         )}
                     </div>
+                    {toggleError && (
+                        <div className="px-4 pb-4">
+                            <p className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                {toggleError}
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 {/* Runoff turnout */}
