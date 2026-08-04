@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>U.S.A.A Elections — Updating</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0; padding: 0; height: 100%;
+            background: #18181b;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .wrap {
+            min-height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        .card {
+            max-width: 460px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 24px;
+            border: 2px solid #27272a;
+            overflow: hidden;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+        }
+        .bar { height: 6px; background: #eab308; }
+        .body { padding: 40px 32px 36px; }
+        .icon {
+            width: 64px; height: 64px;
+            margin: 0 auto 20px;
+            border-radius: 50%;
+            background: #fef9c3;
+            border: 2px solid #eab308;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .icon svg { width: 30px; height: 30px; }
+        h1 {
+            font-size: 22px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: -0.02em;
+            color: #18181b;
+            margin: 0 0 10px;
+        }
+        p {
+            font-size: 14px;
+            font-weight: 500;
+            color: #71717a;
+            line-height: 1.6;
+            margin: 0 0 22px;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #fef9c3;
+            color: #854d0e;
+            border: 1px solid #fde047;
+            font-size: 11px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 8px 16px;
+            border-radius: 999px;
+            margin-bottom: 22px;
+        }
+        .dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: #eab308;
+            animation: pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.35; }
+        }
+        .foot {
+            font-size: 12px;
+            color: #a1a1aa;
+            font-weight: 700;
+            border-top: 1px solid #f4f4f5;
+            padding-top: 18px;
+            margin-top: 4px;
+        }
+        .foot a { color: #71717a; text-decoration: underline; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <div class="bar"></div>
+        <div class="body">
+            <div class="badge"><span class="dot"></span> System Update In Progress</div>
+            <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#ca8a04" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M12 6v6l4 2"></path>
+                </svg>
+            </div>
+            <h1>Preparing the Runoff Election</h1>
+            <p>
+                We're updating the voting system to run the runoff election for
+                President and Minister of Education. Voting here is temporarily
+                paused while this is set up.
+            </p>
+            <p>
+                Please check back shortly. You do not need to do anything right now,
+                you'll be notified when runoff voting opens.
+            </p>
+            <div class="foot">U.S.A.A Electoral Commission</div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
