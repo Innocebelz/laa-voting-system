@@ -8,7 +8,7 @@
     {
       "source": "/(.*)",
       "has": [{ "type": "host", "value": "www.usaavoting.com" }],
-      "destination": "/public/maintenance.html"
+      "destination": "/maintenance.html"
     },
     {
       "source": "/(.*)",
