@@ -39,12 +39,13 @@ interface Turnout {
 interface WinnerInfo {
     candidate: { id: string; name: string; image: string; votes: number } | null;
     pct:    number;
-    reason: 'winner' | 'failed_threshold' | 'tied' | 'no_votes' | 'runoff_pending';
+    reason: 'winner' | 'failed_threshold' | 'tied' | 'no_votes' | 'runoff_pending' | 'awaiting_publish';
 }
 
 interface RunoffInfo {
     active:    boolean;
     open:      boolean;
+    published: boolean;
     positions: string[];
     results:   Tally | null;
     turnout:   Turnout | null;
@@ -91,12 +92,12 @@ const PublicResults: React.FC = () => {
                     setTurnout(data.turnout);
                     setRunoff(data.runoff ?? null);
 
-                    // Keep polling while a runoff is underway so this page
-                    // flips from "Runoff In Progress" to the final runoff
-                    // winner automatically once the EC closes it — same as
-                    // how the general election flips from in-progress to
-                    // closed above.
-                    if (data.runoff?.active && data.runoff?.open) {
+                    // Keep polling while a runoff is underway, or closed but
+                    // not yet published, so this page flips from "Runoff In
+                    // Progress" to "Awaiting Publish" to the final runoff
+                    // winner automatically — same as how the general
+                    // election flips from in-progress to closed above.
+                    if (data.runoff?.active && (data.runoff?.open || !data.runoff?.published)) {
                         pollTimer = setTimeout(fetchResults, 30000);
                     }
                 }
@@ -228,8 +229,14 @@ const PublicResults: React.FC = () => {
     // race, so it's just plurality + the same 50% Vote of Confidence rule.
     const getRunoffWinnerInfo = (dbKey: string): WinnerInfo | null => {
         if (!runoff?.active || !runoff.positions.includes(dbKey)) return null;
-        if (runoff.open || !runoff.results) {
+        if (runoff.open) {
             return { candidate: null, pct: 0, reason: 'runoff_pending' };
+        }
+        // Closed, but the EC hasn't published the tally yet — distinct from
+        // "still voting" so the page can say the right thing while the
+        // official announcement is pending.
+        if (!runoff.published || !runoff.results) {
+            return { candidate: null, pct: 0, reason: 'awaiting_publish' };
         }
 
         const result = buildRunoffResults(dbKey);
@@ -378,6 +385,27 @@ const PublicResults: React.FC = () => {
             );
         }
 
+        if (info.reason === 'awaiting_publish') {
+            return (
+                <div className={`bg-orange-50 rounded-2xl border-2 border-orange-200 ${large ? 'p-7' : 'p-5'}`}>
+                    <div className="flex flex-col items-center text-center">
+                        <div className={`${large ? 'w-20 h-20' : 'w-16 h-16'} rounded-full bg-orange-100 border-2 border-orange-300 flex items-center justify-center mb-3`}>
+                            <Clock className={large ? 'w-9 h-9 text-orange-500' : 'w-7 h-7 text-orange-500'} />
+                        </div>
+                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-1">
+                            {categoryLabel}
+                        </p>
+                        <p className={`font-black text-orange-700 uppercase ${large ? 'text-base' : 'text-sm'}`}>
+                            Results Not Yet Published
+                        </p>
+                        <p className="text-xs text-orange-500 font-bold mt-1">
+                            Voting has closed — the EC will publish results shortly
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
         if (info.reason === 'tied') {
             return (
                 <div className={`bg-orange-50 rounded-2xl border-2 border-orange-200 ${large ? 'p-7' : 'p-5'}`}>
@@ -450,83 +478,11 @@ const PublicResults: React.FC = () => {
                 </button>
             </div>
 
-            {/* ── Turnout ────────────────────────────────────────────────────────── */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-
-                <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
-                    <div className="h-1 bg-zinc-200" />
-                    <div className="p-5 flex flex-col items-center text-center">
-                        <Users className="w-5 h-5 text-zinc-300 mb-2" />
-                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Total Eligible</p>
-                        <p className="text-4xl font-black text-zinc-900 tabular-nums">{animEligible}</p>
-                    </div>
-                </div>
-
-                <div className="bg-zinc-900 rounded-2xl border-2 border-zinc-900 overflow-hidden">
-                    <div className="h-1 bg-yellow-500" />
-                    <div className="p-5 flex flex-col items-center text-center">
-                        <TrendingUp className="w-5 h-5 text-yellow-400 mb-2" />
-                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Votes Cast</p>
-                        <p className="text-4xl font-black text-white tabular-nums">{animCast}</p>
-                    </div>
-                </div>
-
-                <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
-                    <div className="h-1 bg-yellow-500" />
-                    <div className="p-5 flex flex-col items-center text-center">
-                        <div className="relative w-16 h-16 mb-1">
-                            <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
-                                <circle cx="18" cy="18" r={R} fill="none" stroke="#f4f4f5" strokeWidth="3.5" />
-                                <circle cx="18" cy="18" r={R} fill="none" stroke="#eab308" strokeWidth="3.5"
-                                        strokeLinecap="round"
-                                        strokeDasharray={`${CIRCUMF} ${CIRCUMF}`}
-                                        strokeDashoffset={offset}
-                                        style={{ transition: 'stroke-dashoffset 0.05s linear' }}
-                                />
-                            </svg>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <span className="text-sm font-black text-zinc-900 tabular-nums">{animPct}%</span>
-                            </div>
-                        </div>
-                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Turnout</p>
-                    </div>
-                </div>
-            </div>
-
-            {/* ── Winner Spotlight Grid ──────────────────────────────────────────── */}
-            <div className="space-y-4">
-                <div className="text-center pt-2">
-                    <h2 className="text-lg font-black text-zinc-900 uppercase tracking-tight flex items-center justify-center gap-2">
-                        <ShieldCheck className="w-5 h-5 text-yellow-500" />
-                        Elected Representatives
-                    </h2>
-                    <p className="text-xs text-zinc-400 font-medium mt-1">
-                        Official results across all 7 positions
-                    </p>
-                </div>
-
-                {presidentCategory && (() => {
-                    const info = getWinnerInfo(presidentCategory.dbKey);
-                    return info ? renderWinnerCard(presidentCategory.position, info, true) : null;
-                })()}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {otherCategories.map(cat => {
-                        const info = getWinnerInfo(cat.dbKey);
-                        if (!info) return null;
-                        return (
-                            <div key={cat.dbKey}>
-                                {renderWinnerCard(cat.position, info)}
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-
             {/* ── Runoff Election ──────────────────────────────────────────────────
-                Separate from the spotlight/breakdown above — shows the runoff
-                status/result for President & Minister of Education alongside
-                (never instead of) their original first-round numbers. */}
+                Shown FIRST, above the round-one results — for President &
+                Minister of Education, the runoff is the current, deciding
+                result, so it leads the page rather than sitting below the
+                (now superseded) round-one numbers for those two seats. */}
             {runoff?.active && (
                 <div className="space-y-4">
                     <div className="text-center pt-2">
@@ -535,7 +491,7 @@ const PublicResults: React.FC = () => {
                             Runoff Election
                         </h2>
                         <p className="text-xs text-zinc-400 font-medium mt-1">
-                            President & Minister of Education — no candidate reached 50% in round one
+                            President & Minister of Education — current result, decided by runoff
                         </p>
                     </div>
 
@@ -580,8 +536,8 @@ const PublicResults: React.FC = () => {
                         })}
                     </div>
 
-                    {/* Runoff breakdown — only once closed */}
-                    {!runoff.open && runoff.results && (
+                    {/* Runoff breakdown — only once closed AND published */}
+                    {!runoff.open && runoff.published && runoff.results && (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {runoff.positions.map(posKey => {
                                 const result = buildRunoffResults(posKey);
@@ -659,6 +615,92 @@ const PublicResults: React.FC = () => {
                     )}
                 </div>
             )}
+
+            {/* ── Turnout (Round 1) ──────────────────────────────────────────────── */}
+            <div className="space-y-4">
+                {runoff?.active && (
+                    <div className="text-center pt-2">
+                        <h2 className="text-lg font-black text-zinc-900 uppercase tracking-tight flex items-center justify-center gap-2">
+                            <ShieldCheck className="w-5 h-5 text-yellow-500" />
+                            Round 1 Results
+                        </h2>
+                        <p className="text-xs text-zinc-400 font-medium mt-1">
+                            Original first-round numbers — see the runoff above for the current President & Minister of Education result
+                        </p>
+                    </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+                    <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
+                        <div className="h-1 bg-zinc-200" />
+                        <div className="p-5 flex flex-col items-center text-center">
+                            <Users className="w-5 h-5 text-zinc-300 mb-2" />
+                            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Total Eligible</p>
+                            <p className="text-4xl font-black text-zinc-900 tabular-nums">{animEligible}</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-zinc-900 rounded-2xl border-2 border-zinc-900 overflow-hidden">
+                        <div className="h-1 bg-yellow-500" />
+                        <div className="p-5 flex flex-col items-center text-center">
+                            <TrendingUp className="w-5 h-5 text-yellow-400 mb-2" />
+                            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Votes Cast</p>
+                            <p className="text-4xl font-black text-white tabular-nums">{animCast}</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
+                        <div className="h-1 bg-yellow-500" />
+                        <div className="p-5 flex flex-col items-center text-center">
+                            <div className="relative w-16 h-16 mb-1">
+                                <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                                    <circle cx="18" cy="18" r={R} fill="none" stroke="#f4f4f5" strokeWidth="3.5" />
+                                    <circle cx="18" cy="18" r={R} fill="none" stroke="#eab308" strokeWidth="3.5"
+                                            strokeLinecap="round"
+                                            strokeDasharray={`${CIRCUMF} ${CIRCUMF}`}
+                                            strokeDashoffset={offset}
+                                            style={{ transition: 'stroke-dashoffset 0.05s linear' }}
+                                    />
+                                </svg>
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className="text-sm font-black text-zinc-900 tabular-nums">{animPct}%</span>
+                                </div>
+                            </div>
+                            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Turnout</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* ── Winner Spotlight Grid ──────────────────────────────────────────── */}
+            <div className="space-y-4">
+                <div className="text-center pt-2">
+                    <h2 className="text-lg font-black text-zinc-900 uppercase tracking-tight flex items-center justify-center gap-2">
+                        <ShieldCheck className="w-5 h-5 text-yellow-500" />
+                        Elected Representatives
+                    </h2>
+                    <p className="text-xs text-zinc-400 font-medium mt-1">
+                        Official results across all 7 positions
+                    </p>
+                </div>
+
+                {presidentCategory && (() => {
+                    const info = getWinnerInfo(presidentCategory.dbKey);
+                    return info ? renderWinnerCard(presidentCategory.position, info, true) : null;
+                })()}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {otherCategories.map(cat => {
+                        const info = getWinnerInfo(cat.dbKey);
+                        if (!info) return null;
+                        return (
+                            <div key={cat.dbKey}>
+                                {renderWinnerCard(cat.position, info)}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
 
             {/* ── Full breakdown per position ─────────────────────────────────────── */}
             <div className="space-y-4">

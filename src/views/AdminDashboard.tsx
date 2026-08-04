@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ELECTION_DATA, RUNOFF_ELECTION_DATA } from '../constants';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, TrendingUp, Users, Download, Lock, Unlock, LogOut, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { Loader2, TrendingUp, Users, Download, Lock, Unlock, LogOut, RefreshCw, ShieldCheck, XCircle, Eye, EyeOff } from 'lucide-react';
 
 const BACKEND_URL = 'https://laa-voting-system.onrender.com';
 
@@ -62,6 +62,15 @@ const AdminDashboard: React.FC = () => {
     const [runoffTurnout, setRunoffTurnout]       = useState<TurnoutData | null>(null);
     const [runoffActionLoading, setRunoffActionLoading] = useState(false);
     const [confirmRunoffToggle, setConfirmRunoffToggle] = useState(false);
+
+    // Runoff results publish gate — independent of open/close. Closing the
+    // runoff only stops it accepting votes; the tally stays hidden on the
+    // public page until an EC super admin explicitly publishes it here.
+    const [runoffResultsPublished, setRunoffResultsPublished] = useState<boolean>(false);
+    const [publishActionLoading, setPublishActionLoading]     = useState(false);
+    const [confirmPublishToggle, setConfirmPublishToggle]     = useState(false);
+    const [publishError, setPublishError]                     = useState<string | null>(null);
+
     const RUNOFF_POSITION_KEYS = ['president', 'minister_of_education'];
 
     // EC members tab
@@ -134,7 +143,11 @@ const AdminDashboard: React.FC = () => {
                 const [rsj, rtj, rtoj] = await Promise.all([
                     runoffStatusRes.json(), runoffTallyRes.json(), runoffTurnoutRes.json(),
                 ]);
-                if (rsj.status === 'success') { setRunoffOpen(rsj.runoff_open); setRunoffStarted(rsj.runoff_started); }
+                if (rsj.status === 'success') {
+                    setRunoffOpen(rsj.runoff_open);
+                    setRunoffStarted(rsj.runoff_started);
+                    setRunoffResultsPublished(!!rsj.runoff_results_published);
+                }
                 if (rtj.status === 'success') setRunoffTally(rtj.data);
                 if (rtoj.status === 'success') setRunoffTurnout(rtoj);
             }
@@ -216,6 +229,31 @@ const AdminDashboard: React.FC = () => {
             setToggleError('Failed to reach the server. Please try again.');
         } finally {
             setRunoffActionLoading(false);
+        }
+    };
+
+    const togglePublishStatus = async () => {
+        setConfirmPublishToggle(false);
+        setPublishActionLoading(true);
+        setPublishError(null);
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/admin/runoff/publish`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                body:    JSON.stringify({ published: !runoffResultsPublished }),
+            });
+            if (res.status === 401) { handleSessionExpired(); return; }
+            const data = await res.json();
+            if (res.ok && data.status === 'success') {
+                setRunoffResultsPublished(data.runoff_results_published);
+            } else {
+                setPublishError(data.detail || 'Failed to update the publish status.');
+            }
+        } catch (err) {
+            console.error('Failed to toggle runoff publish status:', err);
+            setPublishError('Failed to reach the server. Please try again.');
+        } finally {
+            setPublishActionLoading(false);
         }
     };
 
@@ -853,6 +891,92 @@ const AdminDashboard: React.FC = () => {
                         </div>
                     )}
                 </div>
+
+                {/* Runoff results publish bar — separate from open/close. The
+                    public results link is already circulating among voters,
+                    so closing the runoff must NOT reveal numbers by itself;
+                    this is the deliberate switch the EC uses once the
+                    official announcement is ready to go out. */}
+                {runoffStarted && (
+                    <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden mb-8">
+                        <div className={`h-1 w-full ${runoffResultsPublished ? 'bg-green-400' : 'bg-zinc-300'}`} />
+                        <div className="p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                                    runoffResultsPublished ? 'bg-green-500 animate-pulse' : 'bg-zinc-300'
+                                }`} />
+                                <div>
+                                    <p className="font-black text-zinc-800 uppercase tracking-wider text-sm leading-none">
+                                        {runoffResultsPublished ? 'Runoff Results Public' : 'Runoff Results Hidden'}
+                                    </p>
+                                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">
+                                        {runoffResultsPublished
+                                            ? 'The public results page is showing the runoff tally'
+                                            : runoffOpen
+                                                ? 'Close the runoff before publishing its results'
+                                                : 'Publish when ready — e.g. after your official announcement'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {isSuperAdmin ? (
+                                confirmPublishToggle ? (
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={togglePublishStatus}
+                                            disabled={publishActionLoading}
+                                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest transition-all border-b-4 active:border-b-0 active:scale-95 disabled:opacity-50 ${
+                                                runoffResultsPublished
+                                                    ? 'bg-zinc-700 text-white border-zinc-900 hover:bg-zinc-800'
+                                                    : 'bg-green-600 text-white border-green-800 hover:bg-green-700'
+                                            }`}
+                                        >
+                                            {publishActionLoading
+                                                ? <Loader2 className="w-4 h-4 animate-spin" />
+                                                : runoffResultsPublished
+                                                    ? <><EyeOff className="w-4 h-4" /> Yes, Unpublish</>
+                                                    : <><Eye className="w-4 h-4" /> Yes, Publish Results</>
+                                            }
+                                        </button>
+                                        <button
+                                            onClick={() => setConfirmPublishToggle(false)}
+                                            className="px-4 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest bg-zinc-100 text-zinc-600 border-b-4 border-zinc-200 hover:bg-zinc-200 active:border-b-0 transition-all"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => setConfirmPublishToggle(true)}
+                                        disabled={!runoffResultsPublished && runoffOpen}
+                                        title={!runoffResultsPublished && runoffOpen ? 'Close the runoff first' : undefined}
+                                        className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest transition-all border-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
+                                            runoffResultsPublished
+                                                ? 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                                                : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                                        }`}
+                                    >
+                                        {runoffResultsPublished
+                                            ? <><EyeOff className="w-4 h-4" /> Unpublish Results</>
+                                            : <><Eye className="w-4 h-4" /> Publish Results</>
+                                        }
+                                    </button>
+                                )
+                            ) : (
+                                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                                    Only super admins can publish runoff results
+                                </span>
+                            )}
+                        </div>
+                        {publishError && (
+                            <div className="px-4 pb-4">
+                                <p className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                    {publishError}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Runoff turnout */}
                 {runoffStarted && runoffTurnout && (

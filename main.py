@@ -277,6 +277,10 @@ def init_db():
             cur.execute("ALTER TABLE Voters ADD COLUMN IF NOT EXISTS has_voted_runoff BOOLEAN NOT NULL DEFAULT FALSE")
             cur.execute("ALTER TABLE System_Settings ADD COLUMN IF NOT EXISTS runoff_open BOOLEAN NOT NULL DEFAULT FALSE")
             cur.execute("ALTER TABLE System_Settings ADD COLUMN IF NOT EXISTS runoff_started BOOLEAN NOT NULL DEFAULT FALSE")
+            # Closing the runoff no longer reveals results by itself — the EC
+            # gets a separate, deliberate "Publish" step so the public page
+            # never shows numbers before the official announcement goes out.
+            cur.execute("ALTER TABLE System_Settings ADD COLUMN IF NOT EXISTS runoff_results_published BOOLEAN NOT NULL DEFAULT FALSE")
 
             cur.execute("""
                         CREATE TABLE IF NOT EXISTS Runoff_Ballots (
@@ -394,6 +398,10 @@ class RunoffVotePayload(BaseModel):
 
 class RunoffStatusUpdate(BaseModel):
     runoff_open: bool
+
+
+class RunoffPublishUpdate(BaseModel):
+    published: bool
 
 
 class AdminLoginRequest(BaseModel):
@@ -1373,15 +1381,17 @@ def get_public_results(conn=Depends(get_db)):
 
     # ── Runoff — only ever populated for President & Minister of Education ──
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT runoff_open, runoff_started FROM System_Settings WHERE id = 1")
+        cur.execute("SELECT runoff_open, runoff_started, runoff_results_published FROM System_Settings WHERE id = 1")
         rsettings = cur.fetchone() or {}
 
-    runoff_open    = bool(rsettings.get("runoff_open"))
-    runoff_started = bool(rsettings.get("runoff_started"))
+    runoff_open      = bool(rsettings.get("runoff_open"))
+    runoff_started   = bool(rsettings.get("runoff_started"))
+    runoff_published = bool(rsettings.get("runoff_results_published"))
 
     runoff_payload = {
         "active":    runoff_started,
         "open":      runoff_open,
+        "published": runoff_published,
         "positions": RUNOFF_POSITIONS,
         "results":   None,
         "turnout":   None,
@@ -1404,9 +1414,11 @@ def get_public_results(conn=Depends(get_db)):
             "turnout_percentage": round((runoff_voted / total * 100)) if total > 0 else 0,
         }
 
-    # Only reveal the runoff TALLY once it has closed — same "no peeking
-    # while voting is open" rule the general election follows.
-    if runoff_started and not runoff_open:
+    # Only reveal the runoff TALLY once it has closed AND the EC has
+    # explicitly published it. Closing the runoff alone is no longer
+    # enough — otherwise the tally would appear on this public page the
+    # instant the EC hits "Close", ahead of any official announcement.
+    if runoff_started and not runoff_open and runoff_published:
         runoff_tally = {}
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             for pos in RUNOFF_POSITIONS:
@@ -1595,13 +1607,14 @@ def require_super_admin(admin=Depends(require_admin)):
 @app.get("/api/admin/runoff/status")
 def get_runoff_status(conn=Depends(get_db), _admin=Depends(require_admin)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT runoff_open, runoff_started FROM System_Settings WHERE id = 1")
+        cur.execute("SELECT runoff_open, runoff_started, runoff_results_published FROM System_Settings WHERE id = 1")
         settings = cur.fetchone() or {}
     return {
-        "status":         "success",
-        "runoff_open":    bool(settings.get("runoff_open")),
-        "runoff_started": bool(settings.get("runoff_started")),
-        "positions":      RUNOFF_POSITIONS,
+        "status":                   "success",
+        "runoff_open":              bool(settings.get("runoff_open")),
+        "runoff_started":           bool(settings.get("runoff_started")),
+        "runoff_results_published": bool(settings.get("runoff_results_published")),
+        "positions":                RUNOFF_POSITIONS,
     }
 
 
@@ -1625,10 +1638,15 @@ def update_runoff_status(payload: RunoffStatusUpdate, request: Request, conn=Dep
             )
 
     with conn.cursor() as cur:
+        # Re-opening the runoff (e.g. to accept more votes after catching an
+        # issue) invalidates any previously published tally, since new votes
+        # will change the numbers — so publishing always turns back off.
         cur.execute(
             "UPDATE System_Settings SET runoff_open = %s, "
-            "runoff_started = runoff_started OR %s WHERE id = 1",
-            (payload.runoff_open, payload.runoff_open),
+            "runoff_started = runoff_started OR %s, "
+            "runoff_results_published = runoff_results_published AND NOT %s "
+            "WHERE id = 1",
+            (payload.runoff_open, payload.runoff_open, payload.runoff_open),
         )
     conn.commit()
 
@@ -1638,6 +1656,40 @@ def update_runoff_status(payload: RunoffStatusUpdate, request: Request, conn=Dep
               ip_address=request.client.host if request.client else None)
 
     return {"status": "success", "runoff_open": payload.runoff_open}
+
+
+@app.post("/api/admin/runoff/publish")
+def publish_runoff_results(payload: RunoffPublishUpdate, request: Request, conn=Depends(get_db), admin=Depends(require_super_admin)):
+    """Show/hide the runoff tally on the public results page. Deliberately
+    separate from open/close: closing the runoff only stops it accepting
+    votes, it does NOT reveal numbers — the EC decides independently when
+    the public page (already linked/shared with students) should show the
+    runoff results, so it can go out after the official announcement
+    instead of automatically the moment voting closes. Super admin only,
+    and only meaningful once the runoff has actually been closed."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT runoff_open, runoff_started FROM System_Settings WHERE id = 1")
+        settings = cur.fetchone() or {}
+
+    if payload.published and (bool(settings.get("runoff_open")) or not bool(settings.get("runoff_started"))):
+        raise HTTPException(
+            status_code=409,
+            detail="Close the runoff before publishing its results."
+        )
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE System_Settings SET runoff_results_published = %s WHERE id = 1",
+            (payload.published,),
+        )
+    conn.commit()
+
+    action = "runoff_results_published" if payload.published else "runoff_results_unpublished"
+    log_audit(conn, action,
+              admin_username=admin.get("username", "unknown"),
+              ip_address=request.client.host if request.client else None)
+
+    return {"status": "success", "runoff_results_published": payload.published}
 
 
 @app.get("/api/admin/runoff/tally")
