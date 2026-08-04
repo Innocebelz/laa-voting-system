@@ -207,6 +207,29 @@ def get_db():
         conn.close()
 
 
+def get_election_phase(conn) -> str:
+    """
+    Single source of truth for what the frontend should currently show:
+      - "runoff"  -> runoff voting is open right now
+      - "general" -> first-round voting is open right now
+      - "closed"  -> nothing is open
+    Note: general and runoff never accept votes at the same time in this
+    workflow (the EC closes the general election before opening a runoff),
+    but if runoff_open is ever TRUE, it always takes priority.
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT election_open, runoff_open FROM System_Settings WHERE id = 1")
+        settings = cur.fetchone()
+
+    if not settings:
+        return "closed"
+    if bool(settings.get("runoff_open")):
+        return "runoff"
+    if bool(settings.get("election_open")):
+        return "general"
+    return "closed"
+
+
 def init_db():
     conn = psycopg2.connect(DB_URL)
     try:
@@ -244,6 +267,24 @@ def init_db():
                                                                        id            INTEGER PRIMARY KEY,
                                                                        election_open BOOLEAN NOT NULL DEFAULT TRUE
                         )""")
+
+            # ── Runoff election support ─────────────────────────────────────
+            # Added when the first-round general election produced no 50%+
+            # winner for one or more positions. Mirrors the general-election
+            # pattern (own "has voted" flag, own anonymous ballots table, own
+            # open/close switch) so the original Ballots data stays untouched
+            # and fully auditable as the permanent first-round record.
+            cur.execute("ALTER TABLE Voters ADD COLUMN IF NOT EXISTS has_voted_runoff BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE System_Settings ADD COLUMN IF NOT EXISTS runoff_open BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE System_Settings ADD COLUMN IF NOT EXISTS runoff_started BOOLEAN NOT NULL DEFAULT FALSE")
+
+            cur.execute("""
+                        CREATE TABLE IF NOT EXISTS Runoff_Ballots (
+                                                                      ballot_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                            president             TEXT,
+                            minister_of_education TEXT,
+                            cast_at               TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                            )""")
 
             # Per-EC-member admin accounts (replaces shared ADMIN_PASSWORD)
             cur.execute("""
@@ -333,6 +374,26 @@ class VotePayload(BaseModel):
 
 class StatusUpdate(BaseModel):
     election_open: bool
+
+
+# ── Runoff election ──────────────────────────────────────────────────────
+# Only President and Minister of Education failed to reach the 50% Vote of
+# Confidence threshold in the first round, so the runoff only ever covers
+# these two positions. If a future election needs a runoff on a different
+# position, add its dbKey to RUNOFF_POSITIONS below and to the
+# Runoff_Ballots table (see README "Adding a New Position").
+RUNOFF_POSITIONS = ["president", "minister_of_education"]
+
+
+class RunoffVotePayload(BaseModel):
+    matric_number: str
+    choices: Dict[str, str] = {}
+    president:             str = ''
+    minister_of_education: str = ''
+
+
+class RunoffStatusUpdate(BaseModel):
+    runoff_open: bool
 
 
 class AdminLoginRequest(BaseModel):
@@ -909,6 +970,207 @@ def cast_vote(payload: VotePayload, authorization: Optional[str] = Header(None),
 
 
 # ---------------------------------------------------------------------------
+# Routes — Runoff Election
+#
+# Separate endpoints, not a "phase" parameter bolted onto the general ones —
+# this way the tried-and-tested general-election endpoints above are never
+# touched or risked. The frontend asks GET /api/election/phase once to know
+# which set of endpoints to call; the pages, routes, and OTP/ballot UX are
+# 100% identical either way.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/election/phase")
+def get_election_phase_route(conn=Depends(get_db)):
+    """Public. Tells the frontend whether to talk to the general-election
+    or runoff-election endpoints right now."""
+    return {"status": "success", "phase": get_election_phase(conn)}
+
+
+@app.post("/api/runoff/request-otp")
+def runoff_request_otp(payload: OTPRequest, conn=Depends(get_db)):
+    if get_election_phase(conn) != "runoff":
+        raise HTTPException(
+            status_code=403,
+            detail="The runoff election is not currently open."
+        )
+
+    matric_number = normalize_matric_number(payload.matric_number)
+    now = time.time()
+    last_request = _last_otp_request_at.get(matric_number)
+    if last_request and (now - last_request) < OTP_RESEND_COOLDOWN_SECONDS:
+        wait = int(OTP_RESEND_COOLDOWN_SECONDS - (now - last_request))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {wait}s before requesting another code."
+        )
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT name, email FROM Voters WHERE matric_number = %s",
+            (matric_number,)
+        )
+        voter = cur.fetchone()
+
+    if not voter:
+        raise HTTPException(status_code=404, detail="Matriculation number not found.")
+
+    email      = voter["email"]
+    voter_name = voter["name"]
+    otp_code   = str(random.SystemRandom().randint(100000, 999999))
+    expires_at = datetime.now() + timedelta(minutes=5)
+
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM OTP_Sessions WHERE matric_number = %s", (matric_number,))
+        cur.execute(
+            "INSERT INTO OTP_Sessions (matric_number, otp_code, expires_at) VALUES (%s, %s, %s)",
+            (matric_number, otp_code, expires_at),
+        )
+    conn.commit()
+
+    send_otp_email(email, otp_code, voter_name)
+
+    _last_otp_request_at[matric_number] = now
+    _otp_attempt_counts[matric_number] = 0
+
+    return {"status": "success", "message": "OTP sent successfully.", "email": mask_email(email)}
+
+
+@app.post("/api/runoff/verify-otp")
+def runoff_verify_otp(payload: OTPVerify, conn=Depends(get_db)):
+    if get_election_phase(conn) != "runoff":
+        raise HTTPException(
+            status_code=403,
+            detail="The runoff election is not currently open."
+        )
+
+    matric_number = normalize_matric_number(payload.matric_number)
+    attempts = _otp_attempt_counts.get(matric_number, 0)
+    if attempts >= MAX_OTP_ATTEMPTS:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM OTP_Sessions WHERE matric_number = %s", (matric_number,))
+        conn.commit()
+        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Please request a new code.")
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT expires_at FROM OTP_Sessions WHERE matric_number = %s AND otp_code = %s",
+            (matric_number, payload.otp_code),
+        )
+        session = cur.fetchone()
+
+    if not session:
+        _otp_attempt_counts[matric_number] = attempts + 1
+        raise HTTPException(status_code=401, detail="Invalid OTP code.")
+
+    if datetime.now() > session["expires_at"]:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM OTP_Sessions WHERE matric_number = %s", (matric_number,))
+        conn.commit()
+        raise HTTPException(status_code=401, detail="OTP code has expired.")
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("DELETE FROM OTP_Sessions WHERE matric_number = %s", (matric_number,))
+        cur.execute(
+            "SELECT name, matric_number, has_voted_runoff FROM Voters WHERE matric_number = %s",
+            (matric_number,),
+        )
+        voter = cur.fetchone()
+    conn.commit()
+
+    _otp_attempt_counts.pop(matric_number, None)
+
+    has_voted = bool(voter["has_voted_runoff"])
+    response = {
+        "status": "success",
+        "user":   {"name": voter["name"], "matric": voter["matric_number"]},
+        "hasVoted": has_voted,
+    }
+
+    if not has_voted:
+        response["voteToken"] = create_token(
+            {"matric_number": voter["matric_number"], "purpose": "vote_runoff"},
+            expires_in_seconds=30 * 60,
+        )
+
+    return response
+
+
+def require_runoff_vote_session(matric_number: str, authorization: Optional[str] = Header(None)):
+    token = _extract_bearer_token(authorization)
+    payload = verify_token(token)
+    if not payload or payload.get("purpose") != "vote_runoff":
+        raise HTTPException(
+            status_code=401,
+            detail="Runoff voting session is missing or expired. Please verify your OTP again."
+        )
+    if payload.get("matric_number") != matric_number:
+        raise HTTPException(status_code=401, detail="Voting session does not match this voter.")
+    return payload
+
+
+@app.post("/api/runoff/vote")
+def cast_runoff_vote(payload: RunoffVotePayload, authorization: Optional[str] = Header(None), conn=Depends(get_db)):
+    matric_number = normalize_matric_number(payload.matric_number)
+    require_runoff_vote_session(matric_number, authorization)
+
+    if get_election_phase(conn) != "runoff":
+        raise HTTPException(status_code=403, detail="The runoff election is currently closed.")
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT has_voted_runoff FROM Voters WHERE matric_number = %s", (matric_number,))
+        voter = cur.fetchone()
+
+    if not voter:
+        raise HTTPException(status_code=404, detail="Voter not found.")
+    if bool(voter["has_voted_runoff"]):
+        raise HTTPException(status_code=403, detail="You have already cast your runoff ballot.")
+
+    c = payload.choices or {}
+    president             = c.get("president", payload.president)
+    minister_of_education = c.get("minister_of_education", payload.minister_of_education)
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO Runoff_Ballots (president, minister_of_education)
+                VALUES (%s, %s)
+                    RETURNING ballot_id
+                """,
+                (president, minister_of_education),
+            )
+            ballot_id = str(cur.fetchone()[0])
+
+            cur.execute(
+                "UPDATE Voters SET has_voted_runoff = TRUE WHERE matric_number = %s",
+                (matric_number,),
+            )
+        conn.commit()
+
+        log_audit(conn, "runoff_vote_cast", admin_username="voter", detail=f"ballot_id={ballot_id}")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"[Runoff Vote Error] {e}")
+        raise HTTPException(status_code=500, detail="Failed to record vote. Please try again.")
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT name, email FROM Voters WHERE matric_number = %s", (matric_number,))
+            voter_details = cur.fetchone()
+        if voter_details:
+            send_confirmation_email(
+                receiver_email=voter_details["email"],
+                voter_name=voter_details["name"],
+                ballot_id=ballot_id,
+            )
+    except Exception as e:
+        print(f"[Runoff Confirmation Email] Lookup failed (non-fatal): {e}")
+
+    return {"status": "success", "message": "Runoff vote successfully cast.", "ballot_id": ballot_id}
+
+
+# ---------------------------------------------------------------------------
 # Routes — Results & Admin
 # ---------------------------------------------------------------------------
 
@@ -1078,6 +1340,52 @@ def get_public_results(conn=Depends(get_db)):
                 for row in cur.fetchall()
             ]
 
+    # ── Runoff — only ever populated for President & Minister of Education ──
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT runoff_open, runoff_started FROM System_Settings WHERE id = 1")
+        rsettings = cur.fetchone() or {}
+
+    runoff_open    = bool(rsettings.get("runoff_open"))
+    runoff_started = bool(rsettings.get("runoff_started"))
+
+    runoff_payload = {
+        "active":    runoff_started,
+        "open":      runoff_open,
+        "positions": RUNOFF_POSITIONS,
+        "results":   None,
+        "turnout":   None,
+    }
+
+    # Only reveal runoff results once it has closed — same "no peeking while
+    # voting is open" rule the general election follows.
+    if runoff_started and not runoff_open:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT COUNT(*) as voted FROM Voters WHERE has_voted_runoff = TRUE")
+            runoff_voted = cur.fetchone()["voted"]
+            cur.execute("SELECT COUNT(*) as ballot_count FROM Runoff_Ballots")
+            runoff_ballot_count = cur.fetchone()["ballot_count"]
+
+        runoff_tally = {}
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for pos in RUNOFF_POSITIONS:
+                cur.execute(
+                    f"SELECT {pos} as candidate_id, COUNT(*) as votes "
+                    f"FROM Runoff_Ballots WHERE {pos} IS NOT NULL AND {pos} != '' "
+                    f"GROUP BY {pos} ORDER BY votes DESC",
+                )
+                runoff_tally[pos] = [
+                    {"candidate_id": row["candidate_id"], "votes": row["votes"]}
+                    for row in cur.fetchall()
+                ]
+
+        runoff_payload["results"] = runoff_tally
+        runoff_payload["turnout"] = {
+            "total_eligible":     total,
+            "votes_cast":         runoff_voted,
+            "total_ballots_cast": runoff_ballot_count,
+            "turnout_percentage": round((runoff_voted / total * 100)) if total > 0 else 0,
+        }
+
     return {
         "status": "closed",
         "turnout": {
@@ -1087,15 +1395,18 @@ def get_public_results(conn=Depends(get_db)):
             "turnout_percentage": round((cast / total * 100)) if total > 0 else 0,
         },
         "results": tally,
+        "runoff":  runoff_payload,
     }
 
 
 @app.get("/api/verify-ballot/{ballot_id}")
 def verify_ballot(ballot_id: str, conn=Depends(get_db)):
     """
-    Checks whether a ballot with this UUID was recorded.
+    Checks whether a ballot with this UUID was recorded, in EITHER the
+    general-election or runoff-election ballots table — a voter's receipt
+    from either round works in the same verification box.
     Returns ONLY a boolean — never reveals vote choices.
-    Anonymity is preserved: the Ballots table has no matric_number column.
+    Anonymity is preserved: neither ballots table has a matric_number column.
     """
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1104,6 +1415,12 @@ def verify_ballot(ballot_id: str, conn=Depends(get_db)):
                 (ballot_id.strip(),)
             )
             found = cur.fetchone()
+            if not found:
+                cur.execute(
+                    "SELECT ballot_id FROM Runoff_Ballots WHERE ballot_id = %s::uuid",
+                    (ballot_id.strip(),)
+                )
+                found = cur.fetchone()
         return {"status": "success", "counted": found is not None}
     except Exception:
         # Invalid UUID format — treat as not found
@@ -1212,10 +1529,6 @@ def update_status(payload: StatusUpdate, request: Request, conn=Depends(get_db),
     return {"status": "success", "election_open": payload.election_open}
 
 
-# ---------------------------------------------------------------------------
-# EC Member management  (super_admin only)
-# ---------------------------------------------------------------------------
-
 def require_super_admin(admin=Depends(require_admin)):
     if admin.get("user_role") != "super_admin":
         raise HTTPException(
@@ -1224,6 +1537,85 @@ def require_super_admin(admin=Depends(require_admin)):
         )
     return admin
 
+
+# ---------------------------------------------------------------------------
+# Runoff Election — Admin controls
+# ---------------------------------------------------------------------------
+
+@app.get("/api/admin/runoff/status")
+def get_runoff_status(conn=Depends(get_db), _admin=Depends(require_admin)):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT runoff_open, runoff_started FROM System_Settings WHERE id = 1")
+        settings = cur.fetchone() or {}
+    return {
+        "status":         "success",
+        "runoff_open":    bool(settings.get("runoff_open")),
+        "runoff_started": bool(settings.get("runoff_started")),
+        "positions":      RUNOFF_POSITIONS,
+    }
+
+
+@app.post("/api/admin/runoff/status")
+def update_runoff_status(payload: RunoffStatusUpdate, request: Request, conn=Depends(get_db), admin=Depends(require_super_admin)):
+    """Open or close the runoff election. Super admin only — same authority
+    level as opening/closing the general election. Opening the runoff for
+    the first time also permanently flips runoff_started to TRUE, which is
+    what unlocks the runoff results/tally being shown at all."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE System_Settings SET runoff_open = %s, "
+            "runoff_started = runoff_started OR %s WHERE id = 1",
+            (payload.runoff_open, payload.runoff_open),
+        )
+    conn.commit()
+
+    action = "runoff_opened" if payload.runoff_open else "runoff_closed"
+    log_audit(conn, action,
+              admin_username=admin.get("username", "unknown"),
+              ip_address=request.client.host if request.client else None)
+
+    return {"status": "success", "runoff_open": payload.runoff_open}
+
+
+@app.get("/api/admin/runoff/tally")
+def get_runoff_tally(conn=Depends(get_db), _admin=Depends(require_admin)):
+    results = {}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        for pos in RUNOFF_POSITIONS:
+            cur.execute(
+                f"SELECT {pos}, COUNT(*) as votes FROM Runoff_Ballots "
+                f"WHERE {pos} IS NOT NULL AND {pos} != '' GROUP BY {pos}",
+            )
+            results[pos] = [
+                {"candidate_id": row[pos], "votes": row["votes"]}
+                for row in cur.fetchall()
+            ]
+    return {"status": "success", "data": results}
+
+
+@app.get("/api/admin/runoff/turnout")
+def get_runoff_turnout(conn=Depends(get_db), _admin=Depends(require_admin)):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT COUNT(*) as count FROM Voters")
+        total = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) as count FROM Voters WHERE has_voted_runoff = TRUE")
+        voted = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) as ballot_count FROM Runoff_Ballots")
+        total_ballots_cast = cur.fetchone()["ballot_count"]
+
+    percentage = round((voted / total) * 100) if total > 0 else 0
+    return {
+        "status": "success",
+        "total_eligible": total,
+        "votes_cast": voted,
+        "total_ballots_cast": total_ballots_cast,
+        "turnout_percentage": percentage,
+    }
+
+
+# ---------------------------------------------------------------------------
+# EC Member management  (super_admin only)
+# ---------------------------------------------------------------------------
 
 @app.get("/api/admin/users")
 def list_admin_users(conn=Depends(get_db), _admin=Depends(require_admin)):

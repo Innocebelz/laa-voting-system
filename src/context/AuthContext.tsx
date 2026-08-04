@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User } from '../types';
-import { ELECTION_DATA } from '../constants';
+import { User, ElectionPhase } from '../types';
+import { ELECTION_DATA, RUNOFF_ELECTION_DATA } from '../constants';
 
 // --- YOUR LIVE RENDER BACKEND URL ---
 const API_BASE_URL = 'https://laa-voting-system.onrender.com';
@@ -32,6 +32,8 @@ interface AuthContextType {
   user: User | null;
   matNumber: string | null;
   maskedEmail: string | null;
+  phase: ElectionPhase;
+  electionData: typeof ELECTION_DATA;
   login: (matNumber: string) => Promise<void>;
   verifyOtp: (otp: string) => Promise<void>;
   vote: (userBallot: Record<string, string>) => Promise<void>;
@@ -63,6 +65,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return localStorage.getItem('laa_vote_token') || null;
   });
 
+  // ── Election phase ────────────────────────────────────────────────────────
+  // "general" | "runoff" | "closed" — tells us which set of backend endpoints
+  // to call (general-election endpoints vs runoff endpoints) and which
+  // ELECTION_DATA array (all 7 positions vs the 2-position runoff ballot)
+  // to render. Fetched once on load; re-fetched on every fresh login attempt
+  // so a voter who opens the app during a phase change always gets the
+  // current one.
+  const [phase, setPhase] = useState<ElectionPhase>('general');
+
+  const fetchPhase = async (): Promise<ElectionPhase> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/election/phase`);
+      const data = await res.json().catch(() => ({}));
+      const p: ElectionPhase = data.phase === 'runoff' || data.phase === 'closed' ? data.phase : 'general';
+      setPhase(p);
+      return p;
+    } catch {
+      return phase; // keep whatever we last knew on network failure
+    }
+  };
+
+  useEffect(() => { fetchPhase(); }, []);
+
+  const electionData = phase === 'runoff' ? RUNOFF_ELECTION_DATA : ELECTION_DATA;
+
   // 2. Automatically sync state changes to Local Storage
   useEffect(() => {
     if (user) localStorage.setItem('laa_user', JSON.stringify(user));
@@ -86,7 +113,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // 3. API Functions (Connected to Cloud Backend)
   const login = async (matNum: string) => {
-    const res = await fetch(`${API_BASE_URL}/api/request-otp`, {
+    // Always ask the backend which election is currently open right before
+    // logging in — this is the moment it matters most (e.g. the EC could
+    // have just switched from general to runoff).
+    const currentPhase = await fetchPhase();
+    const otpEndpoint = currentPhase === 'runoff' ? '/api/runoff/request-otp' : '/api/request-otp';
+
+    const res = await fetch(`${API_BASE_URL}${otpEndpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ matric_number: matNum })
@@ -107,7 +140,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const verifyOtp = async (otp: string) => {
     if (!matNumber) throw new Error('Matriculation number is missing.');
 
-    const res = await fetch(`${API_BASE_URL}/api/verify-otp`, {
+    const verifyEndpoint = phase === 'runoff' ? '/api/runoff/verify-otp' : '/api/verify-otp';
+
+    const res = await fetch(`${API_BASE_URL}${verifyEndpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ matric_number: matNumber, otp_code: otp })
@@ -123,7 +158,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       matNumber: data.user.matric,
       name: data.user.name,
       hasVoted: data.hasVoted,
-      userBallot: data.userBallot
+      userBallot: data.userBallot,
+      phase,
     });
 
     // Present only when hasVoted is false — proves OTP was just verified.
@@ -134,19 +170,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!matNumber) throw new Error('Not authenticated');
     if (!voteToken) throw new Error('Your voting session has expired. Please verify your OTP again.');
 
+    const isRunoff = phase === 'runoff';
+    const activeData = isRunoff ? RUNOFF_ELECTION_DATA : ELECTION_DATA;
+    const voteEndpoint = isRunoff ? '/api/runoff/vote' : '/api/vote';
+
     const payload: Record<string, unknown> = { matric_number: matNumber, choices: {} };
 
-    // Build choices dynamically from ELECTION_DATA so that adding/renaming
-    // positions only requires updating constants.ts — not this file.
+    // Build choices dynamically from the active ballot's positions so that
+    // adding/renaming positions only requires updating constants.ts.
     const choices: Record<string, string> = {};
-    ELECTION_DATA.forEach(cat => {
+    activeData.forEach(cat => {
       choices[cat.dbKey] = userBallot[cat.position] || '';
     });
     payload.choices = choices;
     // Also spread individual fields for backwards-compat with the backend model
     Object.assign(payload, choices);
 
-    const res = await fetch(`${API_BASE_URL}/api/vote`, {
+    const res = await fetch(`${API_BASE_URL}${voteEndpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -180,7 +220,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   return (
-      <AuthContext.Provider value={{ user, matNumber, maskedEmail, login, verifyOtp, vote, logout }}>
+      <AuthContext.Provider value={{ user, matNumber, maskedEmail, phase, electionData, login, verifyOtp, vote, logout }}>
         {children}
       </AuthContext.Provider>
   );

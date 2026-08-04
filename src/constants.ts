@@ -56,26 +56,26 @@ export const ELECTION_DATA: ElectionCategory[] = [
           'Prepare students for life after Algeria through career readiness, degree recognition, and academic advocacy.',
         ],
       },
-        {
-            id: 'pres_3',
-            name: 'Natukunda Isaiah',
-            image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785153557/isaiah_om1yni.png',
-            manifesto:
-                'Committed to building a student-centred association through transparent leadership, effective communication, student welfare, academic excellence, and unity.',
-            motto: 'Progress Guided by Your Voice',
-            keyPriorities: [
-                'Build a truly student-centred association where every voice matters.',
-                'Promote transparent and accountable leadership.',
-                'Ensure effective communication and information sharing.',
-                'Strengthen student welfare and support systems.',
-                'Guarantee equal representation and participatory leadership.',
-                'Promote academic excellence and personal development.',
-                'Build strong institutions for lasting impact.',
-                'Foster unity and inclusiveness among all students.',
-                'Strengthen professional representation and strategic partnerships.',
-                'Lead with integrity, humility, and a spirit of service.',
-            ],
-        },
+      {
+        id: 'pres_3',
+        name: 'Natukunda Isaiah',
+        image: 'https://res.cloudinary.com/dbdgbj4qz/image/upload/v1785153557/isaiah_om1yni.png',
+        manifesto:
+            'Committed to building a student-centred association through transparent leadership, effective communication, student welfare, academic excellence, and unity.',
+        motto: 'Progress Guided by Your Voice',
+        keyPriorities: [
+          'Build a truly student-centred association where every voice matters.',
+          'Promote transparent and accountable leadership.',
+          'Ensure effective communication and information sharing.',
+          'Strengthen student welfare and support systems.',
+          'Guarantee equal representation and participatory leadership.',
+          'Promote academic excellence and personal development.',
+          'Build strong institutions for lasting impact.',
+          'Foster unity and inclusiveness among all students.',
+          'Strengthen professional representation and strategic partnerships.',
+          'Lead with integrity, humility, and a spirit of service.',
+        ],
+      },
     ],
   },
 
@@ -269,3 +269,36 @@ export const ELECTION_DATA: ElectionCategory[] = [
     ],
   },
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RUNOFF ELECTION — 2026
+//
+// President and Minister of Education both failed to clear the 50% Vote of
+// Confidence threshold in the first round (3-way splits with no majority).
+// A runoff is held for ONLY these two positions, between ONLY the top 2
+// candidates from round one.
+//
+
+// HOW TO UPDATE FOR A FUTURE RUNOFF:
+//   • Change RUNOFF_ADVANCING_IDS to the new set of {dbKey: [id, id]}.
+//   • Candidate details (name/image/manifesto/etc.) are pulled automatically
+//     from ELECTION_DATA above — never duplicated or re-typed here.
+//   • dbKey values MUST match a Runoff_Ballots column in main.py.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const RUNOFF_ADVANCING_IDS: Record<string, string[]> = {
+  president:             ['pres_1', 'pres_3'],   // Omara Abraham Christopher vs Natukunda Isaiah
+  minister_of_education:  ['medu_2', 'medu_3'],   // Muhindo Brian vs Omongin David Silas
+};
+
+export const RUNOFF_ELECTION_DATA: ElectionCategory[] = Object.entries(RUNOFF_ADVANCING_IDS)
+    .map(([dbKey, advancingIds]) => {
+      const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
+      if (!category) return null;
+      return {
+        ...category,
+        unopposed: false, // a 2-way runoff is always a real contest
+        candidates: category.candidates.filter(c => advancingIds.includes(c.id)),
+      };
+    })
+    .filter((c): c is ElectionCategory => c !== null);

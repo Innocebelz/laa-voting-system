@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { Loader2, AlertCircle, CheckCircle2, ChevronDown, ShieldCheck, ZoomIn, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { ELECTION_DATA } from '../constants';
+import { ELECTION_DATA, RUNOFF_ELECTION_DATA } from '../constants';
 
 const VotingBooth: React.FC = () => {
     const [selections, setSelections]     = useState<Record<string, string>>({});
@@ -17,6 +17,14 @@ const VotingBooth: React.FC = () => {
     const { user, vote } = useAuth();
     const navigate = useNavigate();
     const confirmRef = useRef<HTMLDivElement>(null);
+
+    // Runoff voters see only President + Minister of Education, with only
+    // the top 2 candidates from round one. Keyed off the phase this login
+    // session was verified under (set once at OTP verification), not the
+    // live/global phase, so an in-progress ballot never shifts underneath
+    // a voter mid-session if the EC changes phase elsewhere.
+    const isRunoff = user?.phase === 'runoff';
+    const ELECTION_DATA_ACTIVE = isRunoff ? RUNOFF_ELECTION_DATA : ELECTION_DATA;
 
     // ── Scroll-reveal + stacking animation ───────────────────────────────
     // Purely visual — does not touch selections, submission, or any vote
@@ -54,7 +62,7 @@ const VotingBooth: React.FC = () => {
 
     const handleSelect = (position: string, candidateId: string) => {
         setSelections(prev => {
-            const category = ELECTION_DATA.find(c => c.position === position);
+            const category = ELECTION_DATA_ACTIVE.find(c => c.position === position);
 
             if (category?.unopposed && prev[position] === candidateId) {
                 const newSelections = { ...prev };
@@ -74,7 +82,7 @@ const VotingBooth: React.FC = () => {
         setExpanded(prev => ({ ...prev, [candidateId]: !prev[candidateId] }));
     };
 
-    const opposedCategories = ELECTION_DATA.filter(c => !c.unopposed);
+    const opposedCategories = ELECTION_DATA_ACTIVE.filter(c => !c.unopposed);
     const requiredPositionsCount = opposedCategories.length;
     const selectedRequiredCount = opposedCategories.filter(c => selections[c.position]).length;
 
@@ -114,15 +122,21 @@ const VotingBooth: React.FC = () => {
             {/* ── Page header ────────────────────────────────────────────── */}
             <div className="mb-6 pt-2">
                 <div className="flex items-center gap-3 mb-1">
-                    <span className="text-xs font-black bg-green-100 text-green-800 border border-green-300 px-2.5 py-1 rounded-full uppercase tracking-widest">
-                        Voting Open
+                    <span className={`text-xs font-black border px-2.5 py-1 rounded-full uppercase tracking-widest ${
+                        isRunoff
+                            ? 'bg-orange-100 text-orange-800 border-orange-300'
+                            : 'bg-green-100 text-green-800 border-green-300'
+                    }`}>
+                        {isRunoff ? 'Runoff Voting Open' : 'Voting Open'}
                     </span>
                     <h2 className="text-2xl sm:text-3xl font-black tracking-tight uppercase text-zinc-900">
-                        Official Ballot
+                        {isRunoff ? 'Runoff Ballot' : 'Official Ballot'}
                     </h2>
                 </div>
                 <p className="text-zinc-500 font-medium text-sm">
-                    Select one candidate per position. Tap <strong>Read more</strong> to see their manifesto.
+                    {isRunoff
+                        ? 'No candidate reached the 50% threshold in the first round for these positions. Pick one candidate per position below.'
+                        : <>Select one candidate per position. Tap <strong>Read more</strong> to see their manifesto.</>}
                 </p>
                 <div className="mt-3 inline-flex items-center bg-zinc-100 border border-zinc-200 px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-zinc-700 uppercase tracking-widest">
                     Voter: {user?.matNumber}
@@ -152,7 +166,7 @@ const VotingBooth: React.FC = () => {
 
             {/* ── Ballot positions ───────────────────────────────────────── */}
             <div className="flex-1 space-y-6 mb-4">
-                {ELECTION_DATA.map((category, index) => {
+                {ELECTION_DATA_ACTIVE.map((category, index) => {
                     const positionSelected  = !!selections[category.position];
                     const selectedCandidate = category.candidates.find(c => c.id === selections[category.position]);
                     const isPresident       = category.position.toLowerCase() === 'president';
@@ -397,14 +411,14 @@ const VotingBooth: React.FC = () => {
 
                             <p className="text-sm text-zinc-500 text-center mb-1 font-medium">
                                 You are about to submit your ballot for{' '}
-                                <strong className="text-zinc-800">{ELECTION_DATA.length} positions</strong>.
+                                <strong className="text-zinc-800">{ELECTION_DATA_ACTIVE.length} positions</strong>.
                             </p>
                             <p className="text-xs text-zinc-400 text-center mb-6 font-semibold uppercase tracking-wider">
                                 This cannot be undone.
                             </p>
 
                             <div className="bg-zinc-50 rounded-lg border border-zinc-200 divide-y divide-zinc-100 mb-6 text-left max-h-48 overflow-y-auto">
-                                {ELECTION_DATA.map(cat => {
+                                {ELECTION_DATA_ACTIVE.map(cat => {
                                     const sel = cat.candidates.find(c => c.id === selections[cat.position]);
 
                                     return (

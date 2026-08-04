@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { CheckCircle2, TrendingUp, Users, LogOut, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { ELECTION_DATA } from '../constants';
+import { ELECTION_DATA, RUNOFF_ELECTION_DATA } from '../constants';
 
 const BACKEND_URL = 'https://laa-voting-system.onrender.com';
 
@@ -43,6 +43,11 @@ const Results: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [visible, setVisible] = useState(false);
+
+  // Show the ballot this voter actually cast — keyed to the phase recorded
+  // at the time they voted, not whatever phase the election is in now.
+  const isRunoff = user?.phase === 'runoff';
+  const ELECTION_DATA_ACTIVE = isRunoff ? RUNOFF_ELECTION_DATA : ELECTION_DATA;
 
   const [turnoutData, setTurnoutData] = useState({
     total_eligible: 0,
@@ -108,7 +113,7 @@ const Results: React.FC = () => {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-black text-green-800 uppercase tracking-wide">
-                Vote Recorded
+                {isRunoff ? 'Runoff Vote Recorded' : 'Vote Recorded'}
               </p>
               <p className="text-xs text-green-700 font-medium mt-0.5">
                 Thank you, <span className="font-black">{user?.name || 'Voter'}</span>. Your ballot has been securely submitted.
@@ -249,7 +254,7 @@ const Results: React.FC = () => {
 
                 /* ── Show choices — only available in the same session as voting ── */
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {ELECTION_DATA.map((category) => {
+                  {ELECTION_DATA_ACTIVE.map((category) => {
                     const selectedId = user?.userBallot?.[category.position];
                     const candidate  = category.candidates.find(c => c.id === selectedId);
 

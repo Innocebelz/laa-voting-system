@@ -8,8 +8,9 @@ const Login: React.FC = () => {
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
   const [visible, setVisible]   = useState(false);   // fade-in on mount
-  const { login } = useAuth();
+  const { login, phase } = useAuth();
   const navigate  = useNavigate();
+  const isRunoff  = phase === 'runoff';
 
   // Trigger fade-in as soon as the component mounts
   useEffect(() => {
@@ -57,10 +58,12 @@ const Login: React.FC = () => {
                 <GraduationCap className="w-7 h-7 text-yellow-400" />
               </div>
               <h1 className="text-2xl font-black text-zinc-900 uppercase tracking-tight">
-                Voter Login
+                {isRunoff ? 'Runoff Voter Login' : 'Voter Login'}
               </h1>
               <p className="text-zinc-500 mt-2 text-sm font-medium">
-                Enter your matriculation number to receive a one-time verification code.
+                {isRunoff
+                    ? 'A runoff is underway for President & Minister of Education. Enter your matriculation number to receive a one-time verification code.'
+                    : 'Enter your matriculation number to receive a one-time verification code.'}
               </p>
             </div>
 

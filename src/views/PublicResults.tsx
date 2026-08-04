@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ELECTION_DATA } from '../constants';
+import { ELECTION_DATA, RUNOFF_ELECTION_DATA } from '../constants';
 import {
     Users, TrendingUp, Search,
-    CheckCircle2, XCircle, Loader2, Clock, Share2, Check, ShieldCheck, MinusCircle
+    CheckCircle2, XCircle, Loader2, Clock, Share2, Check, ShieldCheck, MinusCircle, Vote
 } from 'lucide-react';
 
 const BACKEND_URL = 'https://laa-voting-system.onrender.com';
@@ -39,13 +39,22 @@ interface Turnout {
 interface WinnerInfo {
     candidate: { id: string; name: string; image: string; votes: number } | null;
     pct:    number;
-    reason: 'winner' | 'failed_threshold' | 'tied' | 'no_votes';
+    reason: 'winner' | 'failed_threshold' | 'tied' | 'no_votes' | 'runoff_pending';
+}
+
+interface RunoffInfo {
+    active:    boolean;
+    open:      boolean;
+    positions: string[];
+    results:   Tally | null;
+    turnout:   Turnout | null;
 }
 
 const PublicResults: React.FC = () => {
     const [status, setStatus]           = useState<'loading' | 'in_progress' | 'closed'>('loading');
     const [tally, setTally]             = useState<Tally | null>(null);
     const [turnout, setTurnout]         = useState<Turnout | null>(null);
+    const [runoff, setRunoff]           = useState<RunoffInfo | null>(null);
     const [visible, setVisible]         = useState(false);
 
     const [receiptInput, setReceiptInput] = useState('');
@@ -80,6 +89,16 @@ const PublicResults: React.FC = () => {
                     setStatus('closed');
                     setTally(data.results);
                     setTurnout(data.turnout);
+                    setRunoff(data.runoff ?? null);
+
+                    // Keep polling while a runoff is underway so this page
+                    // flips from "Runoff In Progress" to the final runoff
+                    // winner automatically once the EC closes it — same as
+                    // how the general election flips from in-progress to
+                    // closed above.
+                    if (data.runoff?.active && data.runoff?.open) {
+                        pollTimer = setTimeout(fetchResults, 30000);
+                    }
                 }
             } catch (e) {
                 console.error('Failed to load results:', e);
@@ -128,6 +147,21 @@ const PublicResults: React.FC = () => {
     };
 
     const buildResults = (dbKey: string) => {
+        // Once a runoff has been CLOSED for this position, its 2-candidate
+        // runoff tally is the final word — show that instead of the
+        // stalemated first-round breakdown.
+        if (runoff?.active && runoff.positions.includes(dbKey) && !runoff.open && runoff.results) {
+            const category = RUNOFF_ELECTION_DATA.find(c => c.dbKey === dbKey);
+            if (!category) return null;
+            const raw     = runoff.results[dbKey] ?? [];
+            const voteMap = Object.fromEntries(raw.map(r => [r.candidate_id, r.votes]));
+            const total   = raw.reduce((s, r) => s + r.votes, 0);
+            const candidates = category.candidates
+                .map(c => ({ ...c, votes: voteMap[c.id] ?? 0 }))
+                .sort((a, b) => b.votes - a.votes);
+            return { label: `${category.position} (Runoff)`, candidates, total };
+        }
+
         const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
         if (!category || !tally) return null;
         const raw      = tally[dbKey] ?? [];
@@ -143,6 +177,36 @@ const PublicResults: React.FC = () => {
     // Used by BOTH the winner spotlight grid and the detailed breakdown
     // below, so the two sections can never disagree with each other.
     const getWinnerInfo = (dbKey: string): WinnerInfo | null => {
+        // Runoff-eligible position, and a runoff has actually been started
+        if (runoff?.active && runoff.positions.includes(dbKey)) {
+            // Still collecting runoff votes (or opened but not yet closed) —
+            // no result to show yet.
+            if (runoff.open || !runoff.results) {
+                return { candidate: null, pct: 0, reason: 'runoff_pending' };
+            }
+
+            const result = buildResults(dbKey);
+            if (!result) return null;
+            const { candidates } = result;
+            const totalBallotsCast = runoff.turnout?.total_ballots_cast ?? runoff.turnout?.votes_cast ?? 0;
+
+            const top  = candidates[0];
+            const next = candidates[1];
+            const pct  = totalBallotsCast > 0 && top ? Math.round((top.votes / totalBallotsCast) * 100) : 0;
+
+            const isTied       = !!top && !!next && top.votes === next.votes && top.votes > 0;
+            const hasPlurality = !!top && top.votes > 0 && !isTied && (!next || top.votes > next.votes);
+            const cleared50    = hasPlurality && top.votes >= (totalBallotsCast / 2);
+
+            return {
+                candidate: cleared50 ? top : null,
+                pct,
+                reason: cleared50
+                    ? 'winner'
+                    : (isTied ? 'tied' : (hasPlurality ? 'failed_threshold' : 'no_votes')),
+            };
+        }
+
         const result   = buildResults(dbKey);
         const category = ELECTION_DATA.find(c => c.dbKey === dbKey);
         if (!result || !category) return null;
@@ -279,6 +343,27 @@ const PublicResults: React.FC = () => {
                         </p>
                         <p className="text-xs text-zinc-400 font-bold mt-1">
                             Leading candidate reached {info.pct}%
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        if (info.reason === 'runoff_pending') {
+            return (
+                <div className={`bg-orange-50 rounded-2xl border-2 border-orange-200 ${large ? 'p-7' : 'p-5'}`}>
+                    <div className="flex flex-col items-center text-center">
+                        <div className={`${large ? 'w-20 h-20' : 'w-16 h-16'} rounded-full bg-orange-100 border-2 border-orange-300 flex items-center justify-center mb-3`}>
+                            <Vote className={large ? 'w-9 h-9 text-orange-500' : 'w-7 h-7 text-orange-500'} />
+                        </div>
+                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-1">
+                            {categoryLabel}
+                        </p>
+                        <p className={`font-black text-orange-700 uppercase ${large ? 'text-base' : 'text-sm'}`}>
+                            Runoff In Progress
+                        </p>
+                        <p className="text-xs text-orange-500 font-bold mt-1">
+                            No candidate reached 50% in round one — results pending
                         </p>
                     </div>
                 </div>
