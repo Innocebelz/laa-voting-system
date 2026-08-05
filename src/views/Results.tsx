@@ -272,12 +272,18 @@ const Results: React.FC = () => {
 
             {/* ── Turnout card(s) ──────────────────────────────────────────────── */}
             {/* Runoff turnout leads — it's the current, live round when it's
-            running, so it belongs above the (now-concluded) general round. */}
+            running, so it belongs above the (now-concluded) general round.
+            Once a runoff has started, the general election is guaranteed
+            closed (the backend never allows both open at once), so its
+            label drops "Live" in favor of "Final". */}
             {runoffTurnoutData.started && (
                 <TurnoutRing label="Live Turnout Metrics · Runoff Election" pct={animPctR} cast={animCastR} total={animTotalR} accent="orange" />
             )}
 
-            <TurnoutRing label="Live Turnout Metrics · General Election" pct={animPct} cast={animCast} total={animTotal} accent="yellow" />
+            <TurnoutRing
+                label={runoffTurnoutData.started ? 'Final Turnout Metrics · Round 1' : 'Live Turnout Metrics · General Election'}
+                pct={animPct} cast={animCast} total={animTotal} accent="yellow"
+            />
 
             {/* ── Your ballot summary ───────────────────────────────────────────── */}
             <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden shadow-sm">
