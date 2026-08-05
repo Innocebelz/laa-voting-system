@@ -378,7 +378,7 @@ const PublicResults: React.FC = () => {
                             Runoff In Progress
                         </p>
                         <p className="text-xs text-orange-500 font-bold mt-1">
-                            No candidate reached 50% in round one — results pending
+                            No candidate reached 50% in round one: results pending
                         </p>
                     </div>
                 </div>
@@ -399,7 +399,7 @@ const PublicResults: React.FC = () => {
                             Results Not Yet Published
                         </p>
                         <p className="text-xs text-orange-500 font-bold mt-1">
-                            Voting has closed — the EC will publish results shortly
+                            Voting has closed, the EC will publish results shortly
                         </p>
                     </div>
                 </div>
@@ -491,7 +491,7 @@ const PublicResults: React.FC = () => {
                             Runoff Election
                         </h2>
                         <p className="text-xs text-zinc-400 font-medium mt-1">
-                            President & Minister of Education — current result, decided by runoff
+                            President & Minister of Education current result, decided by runoff
                         </p>
                     </div>
 
@@ -625,7 +625,7 @@ const PublicResults: React.FC = () => {
                             Round 1 Results
                         </h2>
                         <p className="text-xs text-zinc-400 font-medium mt-1">
-                            Original first-round numbers — see the runoff above for the current President & Minister of Education result
+                            Original first-round numbers, see the runoff above for the current President & Minister of Education result
                         </p>
                     </div>
                 )}
