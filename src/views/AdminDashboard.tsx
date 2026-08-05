@@ -104,6 +104,10 @@ const AdminDashboard: React.FC = () => {
     const animCast     = useCountUp(turnout?.votes_cast          ?? 0, 1000, 400);
     const animPct      = useCountUp(turnout?.turnout_percentage  ?? 0, 1200, 500);
 
+    const animEligibleRunoff = useCountUp(runoffTurnout?.total_eligible     ?? 0, 1000, 300);
+    const animCastRunoff     = useCountUp(runoffTurnout?.votes_cast         ?? 0, 1000, 400);
+    const animPctRunoff      = useCountUp(runoffTurnout?.turnout_percentage ?? 0, 1200, 500);
+
     const getAuthHeaders = (): HeadersInit => {
         const token = sessionStorage.getItem('laa_admin_token');
         return token ? { Authorization: `Bearer ${token}` } : {};
@@ -305,6 +309,24 @@ const AdminDashboard: React.FC = () => {
         document.body.removeChild(link);
     };
 
+    const downloadRunoffCSV = () => {
+        if (!runoffTally) return;
+        let csv = 'Position,Candidate,Votes\n';
+        RUNOFF_POSITION_KEYS.forEach(posKey => {
+            const result = buildRunoffPositionResults(posKey);
+            if (!result) return;
+            result.candidates.forEach(c => {
+                csv += `"${result.label} (Runoff)","${c.name}",${c.votes}\n`;
+            });
+        });
+        const link  = document.createElement('a');
+        link.href   = encodeURI('data:text/csv;charset=utf-8,' + csv);
+        link.setAttribute('download', `usaa_runoff_results_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
     const fetchMembers = async () => {
         try {
             const res = await fetch(`${BACKEND_URL}/api/admin/users`, { headers: getAuthHeaders() });
@@ -390,6 +412,7 @@ const AdminDashboard: React.FC = () => {
     const R       = 15.9155;
     const CIRCUMF = 2 * Math.PI * R;
     const offset  = CIRCUMF - (animPct / 100) * CIRCUMF;
+    const offsetRunoff = CIRCUMF - (animPctRunoff / 100) * CIRCUMF;
 
     // dbKey is the exact Postgres column name — no derivation needed
     const positionKeys = ELECTION_DATA.map(c => c.dbKey);
@@ -796,7 +819,7 @@ const AdminDashboard: React.FC = () => {
                 </div>
 
                 {/* ── Runoff Election ─────────────────────────────────────────── */}
-                <div className="flex items-center justify-between mb-5 mt-10 pt-8 border-t-2 border-zinc-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 mt-10 pt-8 border-t-2 border-zinc-200">
                     <div>
                         <h2 className="text-xl font-black text-zinc-900 tracking-tight uppercase">
                             Runoff Election
@@ -805,6 +828,16 @@ const AdminDashboard: React.FC = () => {
                             President & Minister of Education only — no candidate reached 50% in round one
                         </p>
                     </div>
+                    {runoffStarted && (
+                        <button
+                            onClick={downloadRunoffCSV}
+                            disabled={!runoffTally}
+                            className="flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white px-5 py-2.5 rounded-xl text-sm font-black uppercase tracking-widest transition-all border-b-4 border-zinc-700 active:border-b-0 active:scale-95 disabled:opacity-40 shrink-0"
+                        >
+                            <Download className="w-4 h-4 text-orange-400" />
+                            Export Runoff CSV
+                        </button>
+                    )}
                 </div>
 
                 {/* Runoff control bar */}
@@ -986,7 +1019,7 @@ const AdminDashboard: React.FC = () => {
                             <div className="p-6 flex flex-col items-center text-center">
                                 <Users className="w-6 h-6 text-zinc-300 mb-2" />
                                 <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Total Eligible</span>
-                                <span className="text-5xl font-black text-zinc-900 tabular-nums">{runoffTurnout.total_eligible}</span>
+                                <span className="text-5xl font-black text-zinc-900 tabular-nums">{animEligibleRunoff}</span>
                             </div>
                         </div>
                         <div className="bg-zinc-900 rounded-2xl border-2 border-zinc-900 overflow-hidden">
@@ -994,14 +1027,29 @@ const AdminDashboard: React.FC = () => {
                             <div className="p-6 flex flex-col items-center text-center">
                                 <TrendingUp className="w-6 h-6 text-orange-400 mb-2" />
                                 <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Runoff Votes Cast</span>
-                                <span className="text-5xl font-black text-white tabular-nums">{runoffTurnout.votes_cast}</span>
+                                <span className="text-5xl font-black text-white tabular-nums">{animCastRunoff}</span>
                             </div>
                         </div>
                         <div className="bg-white rounded-2xl border-2 border-zinc-200 overflow-hidden">
                             <div className="h-1 bg-orange-400" />
-                            <div className="p-6 flex flex-col items-center text-center justify-center">
-                                <span className="text-5xl font-black text-zinc-900 tabular-nums">{runoffTurnout.turnout_percentage}%</span>
-                                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-1">Runoff Turnout</span>
+                            <div className="p-6 flex flex-col items-center text-center">
+                                <div className="relative w-24 h-24 mb-1">
+                                    <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                                        <circle cx="18" cy="18" r={R} fill="none" stroke="#f4f4f5" strokeWidth="3.5" />
+                                        <circle
+                                            cx="18" cy="18" r={R}
+                                            fill="none" stroke="#f97316" strokeWidth="3.5"
+                                            strokeLinecap="round"
+                                            strokeDasharray={`${CIRCUMF} ${CIRCUMF}`}
+                                            strokeDashoffset={offsetRunoff}
+                                            style={{ transition: 'stroke-dashoffset 0.05s linear' }}
+                                        />
+                                    </svg>
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <span className="text-xl font-black text-zinc-900 tabular-nums">{animPctRunoff}%</span>
+                                    </div>
+                                </div>
+                                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Runoff Turnout</span>
                             </div>
                         </div>
                     </div>

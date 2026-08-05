@@ -266,9 +266,14 @@ const PublicResults: React.FC = () => {
     const animCast      = useCountUp(turnout?.votes_cast          ?? 0, 1000, 500);
     const animEligible  = useCountUp(turnout?.total_eligible      ?? 0, 1000, 600);
 
+    const animPctRunoff      = useCountUp(runoff?.turnout?.turnout_percentage ?? 0, 1200, 400);
+    const animCastRunoff     = useCountUp(runoff?.turnout?.votes_cast          ?? 0, 1000, 500);
+    const animEligibleRunoff = useCountUp(runoff?.turnout?.total_eligible      ?? 0, 1000, 600);
+
     const R       = 15.9155;
     const CIRCUMF = 2 * Math.PI * R;
-    const offset  = CIRCUMF - (animPct / 100) * CIRCUMF;
+    const offset       = CIRCUMF - (animPct / 100) * CIRCUMF;
+    const offsetRunoff = CIRCUMF - (animPctRunoff / 100) * CIRCUMF;
 
     if (status === 'loading') return (
         <div className="flex flex-col items-center justify-center flex-1 gap-4 text-zinc-500">
@@ -502,7 +507,7 @@ const PublicResults: React.FC = () => {
                                 <div className="p-5 flex flex-col items-center text-center">
                                     <Users className="w-5 h-5 text-zinc-300 mb-1.5" />
                                     <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Total Eligible</span>
-                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{runoff.turnout.total_eligible}</span>
+                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{animEligibleRunoff}</span>
                                 </div>
                             </div>
                             <div className="bg-white rounded-2xl border-2 border-orange-200 overflow-hidden">
@@ -510,14 +515,27 @@ const PublicResults: React.FC = () => {
                                 <div className="p-5 flex flex-col items-center text-center">
                                     <TrendingUp className="w-5 h-5 text-orange-400 mb-1.5" />
                                     <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Runoff Votes Cast</span>
-                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{runoff.turnout.votes_cast}</span>
+                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{animCastRunoff}</span>
                                 </div>
                             </div>
                             <div className="bg-white rounded-2xl border-2 border-orange-200 overflow-hidden">
                                 <div className="h-1 bg-orange-400" />
-                                <div className="p-5 flex flex-col items-center text-center justify-center">
-                                    <span className="text-3xl font-black text-zinc-900 tabular-nums">{runoff.turnout.turnout_percentage}%</span>
-                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-1">Runoff Turnout</span>
+                                <div className="p-5 flex flex-col items-center text-center">
+                                    <div className="relative w-16 h-16 mb-1">
+                                        <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                                            <circle cx="18" cy="18" r={R} fill="none" stroke="#f4f4f5" strokeWidth="3.5" />
+                                            <circle cx="18" cy="18" r={R} fill="none" stroke="#f97316" strokeWidth="3.5"
+                                                    strokeLinecap="round"
+                                                    strokeDasharray={`${CIRCUMF} ${CIRCUMF}`}
+                                                    strokeDashoffset={offsetRunoff}
+                                                    style={{ transition: 'stroke-dashoffset 0.05s linear' }}
+                                            />
+                                        </svg>
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <span className="text-sm font-black text-zinc-900 tabular-nums">{animPctRunoff}%</span>
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Runoff Turnout</span>
                                 </div>
                             </div>
                         </div>
