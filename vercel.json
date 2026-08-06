@@ -2,16 +2,6 @@
   "rewrites": [
     {
       "source": "/(.*)",
-      "has": [{ "type": "host", "value": "usaavoting.com" }],
-      "destination": "/maintenance.html"
-    },
-    {
-      "source": "/(.*)",
-      "has": [{ "type": "host", "value": "www.usaavoting.com" }],
-      "destination": "/maintenance.html"
-    },
-    {
-      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
