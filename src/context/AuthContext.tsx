@@ -76,7 +76,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const fetchPhase = async (): Promise<ElectionPhase> => {
         try {
-            const res = await fetch(`${API_BASE_URL}/api/election/phase`);
+            // cache: 'no-store' plus a cache-busting query param — belt and
+            // suspenders against any layer between us and the voter (their
+            // carrier, a CDN, or an in-app browser's WebView, e.g. WhatsApp's,
+            // which can be aggressive about caching plain GETs even when the
+            // server sends Cache-Control: no-store) serving a stale phase.
+            const res = await fetch(`${API_BASE_URL}/api/election/phase?_=${Date.now()}`, { cache: 'no-store' });
             const data = await res.json().catch(() => ({}));
             const p: ElectionPhase = data.phase === 'runoff' || data.phase === 'closed' ? data.phase : 'general';
             setPhase(p);
@@ -87,6 +92,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     useEffect(() => { fetchPhase(); }, []);
+
+    // Keep the phase current for anyone sitting on the login/verify screens —
+    // this is exactly the moment an EC phase switch (round 1 -> runoff) most
+    // needs to reach the voter without them having to think to refresh.
+    useEffect(() => {
+        const t = window.setInterval(() => { fetchPhase(); }, 20000);
+        return () => window.clearInterval(t);
+    }, []);
 
     const electionData = phase === 'runoff' ? RUNOFF_ELECTION_DATA : ELECTION_DATA;
 

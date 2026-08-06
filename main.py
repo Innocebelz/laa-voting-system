@@ -63,6 +63,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def no_store_on_api_responses(request: Request, call_next):
+    """Every response from this API must be treated as fresh, never cached.
+    GET /api/election/phase in particular gets hit right before every
+    login/verify — if anything between us and the voter's browser (their
+    carrier, a CDN, or an in-app browser's WebView like WhatsApp's, which
+    is notably aggressive about caching plain GETs) serves a stale copy,
+    a voter can be shown the wrong election phase (e.g. still "round 1"
+    after the EC has already switched to the runoff) until they manually
+    reload — exactly the kind of silent, confusing failure this closes."""
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
 # ---------------------------------------------------------------------------
 # Auth — signed session tokens (HMAC-SHA256, stdlib only, no JWT library)
 #
@@ -726,7 +742,7 @@ def request_otp(payload: OTPRequest, conn=Depends(get_db)):
     if not settings or not bool(settings["election_open"]) or bool(settings.get("runoff_open")):
         raise HTTPException(
             status_code=403,
-            detail="Voting is closed now, check later when the EC opens the Election"
+            detail="Voting is closed. The link to the results page will be sent to the USAA group"
         )
 
     matric_number = normalize_matric_number(payload.matric_number)
